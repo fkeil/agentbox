@@ -133,7 +133,9 @@ agentbox images prune           Delete all cache images
 agentbox agents                 List all available agents (manifests + built-ins)
 agentbox attach <box-name>      Reconnect to a stopped/running persistent box
 agentbox profile list           List saved profiles
-agentbox profile run <name> <folder>  Launch a box from a saved profile
+agentbox profile save <name> --from <box.yaml>  Save a box.yaml as a named profile
+agentbox profile run <name> --folder <path>  Launch a box from a saved profile
+agentbox profile show <name>    Show a profile's settings
 agentbox profile rm <name>      Delete a saved profile
 agentbox manifest list          List all manifests (bundled + user-installed)
 agentbox manifest add <source>  Install a manifest from a URL or local file
@@ -1018,7 +1020,15 @@ A **profile** saves a `provider` + `agent` + `network` + `resources` + `extra_en
 
 ### Save a profile
 
-Create a file `~/.config/agentbox/profiles/my-profile.yaml`:
+The easiest way is to save from an existing `box.yaml`:
+
+```bash
+agentbox profile save my-anthropic --from box.yaml
+# Overwrite if it already exists:
+agentbox profile save my-anthropic --from box.yaml --force
+```
+
+Or create the profile YAML directly in `~/.config/agentbox/profiles/my-profile.yaml`:
 
 ```yaml
 name: my-profile
@@ -1036,20 +1046,20 @@ lifecycle: ephemeral
 
 ```bash
 # Launch a box from the profile for a specific folder
-agentbox profile run my-profile ./my-project
+agentbox profile run my-profile --folder ./my-project
 
 # With a custom box name (required for persistent lifecycle)
-agentbox profile run my-profile ./my-project --name my-box
+agentbox profile run my-profile --folder ./my-project --box-name my-box
 
 # Override lifecycle at invocation time
-agentbox profile run my-profile ./my-project --lifecycle persistent --name my-box
+agentbox profile run my-profile --folder ./my-project --lifecycle persistent --box-name my-box
 ```
 
 ### List and manage profiles
 
 ```bash
 agentbox profile list            # table of all saved profiles
-agentbox profile show my-profile # YAML dump of a single profile
+agentbox profile show my-profile # show a profile's settings
 agentbox profile rm my-profile   # delete a profile
 ```
 

@@ -1,4 +1,7 @@
-use agentbox_core::{list_profiles, load_profile, remove_profile, run_box_config, ProfileError};
+use agentbox_core::{
+    config::Lifecycle, find_manifests_dir_pub, list_profiles, load_profile, remove_profile,
+    run_box_config, save_profile, Profile, ProfileError,
+};
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
 
@@ -18,6 +21,8 @@ pub enum ProfileCommand {
     Rm { name: String },
     /// Run a box using a named profile
     Run(ProfileRunArgs),
+    /// Save a box.yaml file as a named profile
+    Save(ProfileSaveArgs),
 }
 
 #[derive(Args)]
@@ -31,8 +36,28 @@ pub struct ProfileRunArgs {
     #[arg(long)]
     pub box_name: Option<String>,
     /// Override lifecycle (ephemeral or persistent)
+    #[arg(long, value_parser = parse_lifecycle)]
+    pub lifecycle: Option<Lifecycle>,
+}
+
+#[derive(Args)]
+pub struct ProfileSaveArgs {
+    /// Profile name to save as
+    pub name: String,
+    /// Path to a box.yaml to read agent + provider settings from
     #[arg(long)]
-    pub lifecycle: Option<String>,
+    pub from: PathBuf,
+    /// Overwrite an existing profile with the same name
+    #[arg(long)]
+    pub force: bool,
+}
+
+fn parse_lifecycle(s: &str) -> Result<Lifecycle, String> {
+    match s {
+        "ephemeral" => Ok(Lifecycle::Ephemeral),
+        "persistent" => Ok(Lifecycle::Persistent),
+        other => Err(format!("unknown lifecycle `{other}`; use ephemeral or persistent")),
+    }
 }
 
 pub async fn run(args: ProfileArgs) -> anyhow::Result<()> {
@@ -41,6 +66,7 @@ pub async fn run(args: ProfileArgs) -> anyhow::Result<()> {
         ProfileCommand::Show { name } => run_show(&name),
         ProfileCommand::Rm { name } => run_rm(&name),
         ProfileCommand::Run(args) => run_run(args).await,
+        ProfileCommand::Save(args) => run_save(args),
     }
 }
 
@@ -90,16 +116,34 @@ fn run_rm(name: &str) -> anyhow::Result<()> {
 }
 
 async fn run_run(args: ProfileRunArgs) -> anyhow::Result<()> {
-    let profile = load_profile(&args.name)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let lifecycle_override = match args.lifecycle.as_deref() {
-        Some("persistent") => Some(agentbox_core::config::Lifecycle::Persistent),
-        Some("ephemeral") | None => None,
-        Some(other) => anyhow::bail!("unknown lifecycle `{other}`; use ephemeral or persistent"),
-    };
-
-    let cfg = profile.into_box_config(args.folder, args.box_name, lifecycle_override);
+    let profile = load_profile(&args.name).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let cfg = profile.into_box_config(args.folder, args.box_name, args.lifecycle);
     agentbox_core::config::validate_config(&cfg)?;
-    run_box_config(cfg, None).await.map_err(|e| anyhow::anyhow!("{e:#}"))
+    let manifests_dir = find_manifests_dir_pub();
+    run_box_config(cfg, manifests_dir.as_deref())
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
+}
+
+fn run_save(args: ProfileSaveArgs) -> anyhow::Result<()> {
+    let cfg = agentbox_core::config::parse_config(&args.from)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let profile = Profile {
+        name: args.name.clone(),
+        agent: cfg.agent.0,
+        provider: cfg.provider,
+        network: cfg.network,
+        resources: cfg.resources,
+        extra_env: cfg.extra_env,
+        backend: cfg.backend,
+        lifecycle: cfg.lifecycle,
+    };
+    let path = save_profile(&profile, args.force).map_err(|e| match e {
+        ProfileError::AlreadyExists(n) => {
+            anyhow::anyhow!("profile `{n}` already exists; use --force to overwrite")
+        }
+        other => anyhow::anyhow!("{other}"),
+    })?;
+    println!("Profile `{}` saved → {}", args.name, path.display());
+    Ok(())
 }
