@@ -1,0 +1,14 @@
+[package]
+name = "agentbox-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "agentbox"
+path = "src/main.rs"
+
+[dependencies]
+agentbox-core = { path = "../core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"

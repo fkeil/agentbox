@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git config *)",
+      "Bash(cargo search *)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(docker --version)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs)",
+      "Bash(sh -s -- -y --no-modify-path)",
+      "Bash(git -C /home/fkeil/projects/agentBox add -A)",
+      "Bash(git -C /home/fkeil/projects/agentBox status)"
+    ]
+  }
+}
