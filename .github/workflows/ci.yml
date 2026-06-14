@@ -63,6 +63,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "gui/src-tauri -> target"
+          prefix-key: v2-brotli-patch
 
       - name: Build GUI
         working-directory: gui/src-tauri
