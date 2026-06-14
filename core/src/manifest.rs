@@ -27,6 +27,10 @@ pub struct AgentManifest {
     /// long-lived background service instead of an interactive session.
     #[serde(default)]
     pub daemon: Option<DaemonConfig>,
+    /// Static env vars always injected into the container for this agent.
+    /// Useful for agent-specific flags (e.g. HERMES_SANDBOX=local).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     pub workdir: String,
 }
 
@@ -80,30 +84,65 @@ pub struct OAuthConfig {
 #[derive(Debug, Deserialize)]
 pub struct InstallConfig {
     pub method: InstallMethod,
+    /// Package names for `npm` and `pip` methods.
+    #[serde(default)]
     pub packages: Vec<String>,
+    /// Extra apt packages to install before the agent (any method).
     #[serde(default)]
     pub apt_deps: Vec<String>,
+    /// URL for `script` and `binary` install methods.
+    pub url: Option<String>,
+    /// Container path where the downloaded binary is placed (`binary` method).
+    #[serde(default = "default_bin_path")]
+    pub bin_path: String,
+    /// Shell command(s) to run after the primary install step.
+    #[serde(default)]
+    pub post_install: Vec<String>,
+}
+
+fn default_bin_path() -> String {
+    "/usr/local/bin".to_string()
 }
 
 impl InstallConfig {
     pub fn build_command(&self) -> Vec<String> {
-        let mut cmd = String::new();
+        let mut steps: Vec<String> = Vec::new();
+
         if !self.apt_deps.is_empty() {
-            cmd.push_str("apt-get update -qq && apt-get install -y -qq ");
-            cmd.push_str(&self.apt_deps.join(" "));
-            cmd.push_str(" 2>/dev/null; ");
+            steps.push(format!(
+                "apt-get update -qq && apt-get install -y -qq {} 2>/dev/null",
+                self.apt_deps.join(" ")
+            ));
         }
+
         match self.method {
             InstallMethod::Npm => {
-                cmd.push_str("npm install -g ");
-                cmd.push_str(&self.packages.join(" "));
+                steps.push(format!("npm install -g {}", self.packages.join(" ")));
             }
             InstallMethod::Pip => {
-                cmd.push_str("pip install --quiet ");
-                cmd.push_str(&self.packages.join(" "));
+                steps.push(format!("pip install --quiet {}", self.packages.join(" ")));
+            }
+            InstallMethod::Script => {
+                let url = self.url.as_deref().unwrap_or("");
+                // Download and pipe to sh. NONINTERACTIVE=1 suppresses prompts.
+                steps.push(format!(
+                    "curl -fsSL '{url}' | NONINTERACTIVE=1 sh"
+                ));
+            }
+            InstallMethod::Binary => {
+                let url = self.url.as_deref().unwrap_or("");
+                let bin_path = &self.bin_path;
+                steps.push(format!(
+                    "curl -fsSL '{url}' -o '{bin_path}/agent-bin' && chmod +x '{bin_path}/agent-bin'"
+                ));
             }
         }
-        vec!["sh".into(), "-c".into(), cmd]
+
+        for extra in &self.post_install {
+            steps.push(extra.clone());
+        }
+
+        vec!["sh".into(), "-c".into(), steps.join(" && ")]
     }
 }
 
@@ -112,6 +151,10 @@ impl InstallConfig {
 pub enum InstallMethod {
     Npm,
     Pip,
+    /// Download a shell script from `url` and pipe to `sh`.
+    Script,
+    /// Download a pre-built binary from `url` to `bin_path`.
+    Binary,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -485,6 +528,102 @@ optional: true
         let yaml = "container_port: 3000\nhost_port: 3000\n";
         let pm: PortMapping = serde_yaml::from_str(yaml).unwrap();
         assert!(!pm.optional);
+    }
+
+    #[test]
+    fn script_install_method_builds_curl_command() {
+        let yaml = r#"
+method: script
+url: https://example.com/install.sh
+apt_deps: [curl]
+"#;
+        let cfg: InstallConfig = serde_yaml::from_str(yaml).unwrap();
+        let cmd = cfg.build_command();
+        assert_eq!(cmd[0], "sh");
+        let script = &cmd[2];
+        assert!(script.contains("apt-get install"), "should install apt deps");
+        assert!(script.contains("curl -fsSL 'https://example.com/install.sh'"));
+        assert!(script.contains("NONINTERACTIVE=1 sh"));
+    }
+
+    #[test]
+    fn binary_install_method_builds_download_command() {
+        let yaml = r#"
+method: binary
+url: https://example.com/agent
+bin_path: /usr/local/bin
+"#;
+        let cfg: InstallConfig = serde_yaml::from_str(yaml).unwrap();
+        let cmd = cfg.build_command();
+        let script = &cmd[2];
+        assert!(script.contains("curl -fsSL 'https://example.com/agent'"));
+        assert!(script.contains("chmod +x"));
+    }
+
+    #[test]
+    fn manifest_env_field_parses() {
+        let yaml = r#"
+id: test-agent
+display_name: Test
+base_image: ubuntu:22.04
+install:
+  method: npm
+  packages: [test]
+supported_providers: [openai]
+auth: {}
+launch:
+  command: [test]
+  args: []
+workdir: /workspace
+env:
+  MY_VAR: my_value
+  SANDBOX: local
+"#;
+        let manifest: AgentManifest = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(manifest.env.get("MY_VAR").map(|s| s.as_str()), Some("my_value"));
+        assert_eq!(manifest.env.get("SANDBOX").map(|s| s.as_str()), Some("local"));
+    }
+
+    #[test]
+    fn hermes_manifest_parses() {
+        let agent = load_real("hermes");
+        assert_eq!(agent.id(), "hermes");
+        // Hermes uses script install, not npm.
+        let install_cmd = agent.install_command();
+        assert_eq!(install_cmd[0], "sh");
+        let script = &install_cmd[2];
+        assert!(script.contains("curl"), "hermes install must use curl");
+        // Hermes env should include sandbox and non-interactive flags.
+        let provider = crate::config::ProviderConfig {
+            name: "openai".into(),
+            provider_type: ProviderType::Openai,
+            model: "gpt-4o".into(),
+            base_url: None,
+            auth: "none".into(),
+            raw: serde_json::Value::Null,
+        };
+        let extra = agent.extra_env(&provider);
+        assert!(extra.contains_key("HERMES_SANDBOX"), "must set HERMES_SANDBOX");
+        assert!(extra.contains_key("HERMES_NON_INTERACTIVE"), "must set HERMES_NON_INTERACTIVE");
+        // Hermes is a daemon agent.
+        assert!(agent.daemon_config().is_some());
+    }
+
+    #[test]
+    fn daemon_config_file_setup_parses() {
+        let yaml = r#"
+requires_lifecycle: persistent
+setup:
+  method: config_file
+  config_path: /root/.agent/config.json
+  config_template: '{"key": "{{API_KEY}}"}'
+ports: []
+"#;
+        let cfg: DaemonConfig = serde_yaml::from_str(yaml).unwrap();
+        let setup = cfg.setup.unwrap();
+        assert_eq!(setup.method, "config_file");
+        assert_eq!(setup.config_path.as_deref(), Some("/root/.agent/config.json"));
+        assert!(setup.config_template.is_some());
     }
 }
 

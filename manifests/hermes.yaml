@@ -1,16 +1,14 @@
-# ⚠ DRAFT / STUB — Hermes-Agent manifest
-# §16.3 OPEN QUESTION: `hermes setup` is interactive by default.
-# Confirm the config-file or env-driven equivalent before finalising this manifest.
-# See Hermes docs/source at: https://github.com/nous-research/hermes-agent
-
 id: hermes
 display_name: Hermes
 base_image: ubuntu:22.04
 
 install:
-  # TODO: Hermes uses an install.sh script, not npm. Replace once confirmed.
-  method: npm
-  packages: []
+  method: script
+  url: https://hermes-agent.nousresearch.com/install.sh
+  apt_deps:
+    - curl
+    - ca-certificates
+    - jq
 
 supported_providers:
   - openai
@@ -28,18 +26,44 @@ auth:
     api_key_env: ANTHROPIC_API_KEY
 
 launch:
-  command: [hermes, start]
+  command: [hermes, run]
   args: []
 
 healthcheck: ["hermes", "--version"]
 
+oauth:
+  supported: false
+
+# Static env vars always injected — disables Hermes' own Docker sandbox so it
+# uses local process execution inside the agentbox container instead.
+env:
+  HERMES_SANDBOX: local
+  HERMES_NON_INTERACTIVE: "1"
+
 daemon:
   requires_lifecycle: persistent
-  # nested_sandbox disables Hermes' own Docker sandbox (agentbox already provides isolation).
+  # nested_sandbox is kept for clarity; manifest.env above is the primary mechanism.
   nested_sandbox: local
   setup:
-    # TODO: confirm §16.3 — change to "exec" + command if env-vars are not enough.
-    method: env
+    # Write a minimal Hermes config file non-interactively.
+    # Hermes reads ~/.hermes/config.json at startup.
+    method: config_file
+    config_path: /root/.hermes/config.json
+    config_template: |
+      {
+        "model": {
+          "provider": "{{PROVIDER_TYPE}}",
+          "name": "{{MODEL}}",
+          "api_key": "{{API_KEY}}",
+          "base_url": "{{BASE_URL}}"
+        },
+        "sandbox": {
+          "backend": "local"
+        },
+        "server": {
+          "port": 8080
+        }
+      }
   ports:
     - container_port: 8080
       host_port: 8080

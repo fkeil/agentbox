@@ -562,12 +562,13 @@ auth: oauth
 
 ### Agent roster
 
-| ID | Name | Providers | Notes |
-|---|---|---|---|
-| `claude-code` | Claude Code | anthropic | Anthropic's official CLI agent; OAuth supported |
-| `opencode` | OpenCode | anthropic, openai, openai-compatible | Multi-provider cloud + local |
-| `pi` | Pi | anthropic, openai, openai-compatible | 15+ providers via `models.json`; Ollama native |
-| `codex` | Codex | openai, openai-compatible | OpenAI's CLI agent; OAuth supported |
+| ID | Name | Mode | Providers | Notes |
+|---|---|---|---|---|
+| `claude-code` | Claude Code | session | anthropic | Anthropic's official CLI agent; OAuth supported |
+| `opencode` | OpenCode | session | anthropic, openai, openai-compatible | Multi-provider cloud + local |
+| `pi` | Pi | session | anthropic, openai, openai-compatible | 15+ providers via `models.json`; Ollama native |
+| `codex` | Codex | session | openai, openai-compatible | OpenAI's CLI agent; OAuth supported |
+| `hermes` | Hermes | **daemon** | openai, openai-compatible, anthropic | Persistent messaging agent; exposes port 8080 |
 
 List available agents at runtime:
 
@@ -587,9 +588,13 @@ display_name: My Agent
 base_image: node:22-slim
 
 install:
-  method: npm          # npm | pip
+  method: npm          # npm | pip | script | binary
   packages:
     - my-agent-package
+  # apt_deps: [curl]  # extra system packages installed before the agent
+  # For script/binary methods:
+  # url: https://example.com/install.sh
+  # post_install: ["my-agent setup --non-interactive"]
 
 supported_providers:
   - openai
@@ -598,6 +603,11 @@ auth:
   openai:
     api_key_env: OPENAI_API_KEY
     base_url_env: OPENAI_BASE_URL
+
+# Static env vars always injected into the container for this agent.
+# env:
+#   MY_FLAG: "1"
+#   SANDBOX: local
 
 healthcheck: ["my-agent", "--version"]
 
@@ -608,6 +618,17 @@ launch:
 
 workdir: /workspace
 ```
+
+**Install methods:**
+
+| Method | Description |
+|---|---|
+| `npm` | `npm install -g <packages>` |
+| `pip` | `pip install --quiet <packages>` |
+| `script` | `curl -fsSL <url> \| NONINTERACTIVE=1 sh` — for agents with `install.sh` scripts |
+| `binary` | `curl -fsSL <url>` → saved to `bin_path` (default `/usr/local/bin`) + `chmod +x` |
+
+All methods accept `apt_deps` (system packages) and `post_install` (extra shell commands) as optional additions.
 
 **Template variables** available in `launch.args` and `config.template`:
 
@@ -788,7 +809,7 @@ provider:
 
 Daemon-mode agents run as long-lived background services inside a persistent box rather than interactive sessions. They expose a local port (e.g. `localhost:8080`) and stay running until you explicitly stop them.
 
-> Daemon mode is defined in the agent's manifest — you cannot turn a session agent into a daemon. Currently, Hermes-Agent is the planned daemon agent (shipped in a future release).
+> Daemon mode is defined in the agent's manifest — you cannot turn a session agent into a daemon. Hermes (by Nous Research) is the built-in daemon agent.
 
 ### Requirements
 
@@ -839,30 +860,59 @@ id: my-daemon
 display_name: My Daemon
 base_image: ubuntu:22.04
 install:
-  method: npm
-  packages: [my-daemon]
+  method: script                        # or: npm | pip | binary
+  url: https://example.com/install.sh   # for script/binary methods
+  apt_deps: [curl, ca-certificates]     # system deps installed first
 supported_providers:
   - openai
 auth:
   openai:
     api_key_env: OPENAI_API_KEY
+# Static env vars always injected for this agent.
+env:
+  DAEMON_SANDBOX: local
+  DAEMON_NON_INTERACTIVE: "1"
 launch:
-  command: [my-daemon, start]
+  command: [my-daemon, run]
   args: []
 workdir: /workspace
 daemon:
   requires_lifecycle: persistent
-  # Disable the agent's own sandbox — agentbox already provides container isolation.
-  nested_sandbox: local
-  # Optional: run a non-interactive setup command before launching.
+  nested_sandbox: local   # injects HERMES_SANDBOX=local for hermes specifically
   setup:
-    method: exec
-    command: [my-daemon, configure, --non-interactive]
+    # Write a rendered config file to the container before the daemon starts.
+    method: config_file    # or: exec | env
+    config_path: /root/.my-daemon/config.json
+    config_template: |
+      {
+        "provider": "{{PROVIDER_TYPE}}",
+        "model": "{{MODEL}}",
+        "api_key": "{{OPENAI_API_KEY}}",
+        "sandbox": "local"
+      }
+    # For exec method: command: [my-daemon, setup, --non-interactive]
   ports:
     - container_port: 8080
       host_port: 8080
       optional: false
 ```
+
+**Setup methods:**
+
+| Method | Behaviour |
+|---|---|
+| `env` | All config via env vars already injected — no extra step |
+| `exec` | Runs `command` inside the container non-interactively; must exit 0 |
+| `config_file` | Renders `config_template` (with `{{ENV_VAR}}` substitution) and writes it to `config_path` |
+
+**`config_file` template variables** — any env var injected into the container, plus these agentbox-provided ones:
+
+| Variable | Value |
+|---|---|
+| `{{PROVIDER_TYPE}}` | `anthropic` / `openai` / `openai-compatible` |
+| `{{MODEL}}` | `provider.model` from box.yaml |
+| `{{API_KEY}}` | Resolved API key (empty if `auth: none`) |
+| `{{BASE_URL}}` | `provider.base_url` or empty string |
 
 ---
 

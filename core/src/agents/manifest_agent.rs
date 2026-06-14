@@ -114,7 +114,7 @@ impl AgentDef for ManifestAgentDef {
     }
 
     fn extra_env(&self, _provider: &ProviderConfig) -> HashMap<String, String> {
-        HashMap::new()
+        self.manifest.env.clone()
     }
 
     fn healthcheck_command(&self) -> Option<Vec<String>> {
