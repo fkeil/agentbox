@@ -53,31 +53,42 @@ impl AgentDef for OpenCodeAgent {
         provider: &ProviderConfig,
         _resolved_key: Option<&str>,
     ) -> Result<Vec<u8>, AgentError> {
-        // OpenCode uses "openai" as the provider key for both openai and
-        // openai-compatible providers. Anthropic gets its own key.
-        let (provider_key, model_prefix) = match &provider.provider_type {
-            ProviderType::Anthropic => ("anthropic", "anthropic"),
-            ProviderType::Openai | ProviderType::OpenaiCompatible => ("openai", "openai"),
+        let mut cfg = match &provider.provider_type {
+            ProviderType::OpenaiCompatible => {
+                // Custom provider using the openai-compatible AI SDK adapter.
+                // The provider key is derived from provider.name in box.yaml.
+                let key = provider_slug(&provider.name);
+                let mut provider_obj = serde_json::json!({
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": &provider.name,
+                    "models": { &provider.model: { "name": &provider.model } },
+                });
+                if let Some(base_url) = &provider.base_url {
+                    provider_obj["options"] = serde_json::json!({ "baseURL": base_url });
+                }
+                serde_json::json!({
+                    "$schema": "https://opencode.ai/config.json",
+                    "provider": { &key: provider_obj },
+                    "model": format!("{}/{}", key, provider.model),
+                })
+            }
+            ProviderType::Openai => {
+                // Built-in openai provider.
+                serde_json::json!({
+                    "$schema": "https://opencode.ai/config.json",
+                    "model": format!("openai/{}", provider.model),
+                })
+            }
+            ProviderType::Anthropic => {
+                // Built-in anthropic provider.
+                serde_json::json!({
+                    "$schema": "https://opencode.ai/config.json",
+                    "model": format!("anthropic/{}", provider.model),
+                })
+            }
         };
 
-        // Provider object: custom API base URL + model registered in the models map.
-        let mut provider_obj = serde_json::json!({
-            "models": {
-                &provider.model: { "name": &provider.model }
-            }
-        });
-        if let Some(base_url) = &provider.base_url {
-            provider_obj["api"] = serde_json::Value::String(base_url.clone());
-        }
-
-        let mut cfg = serde_json::json!({
-            "$schema": "https://opencode.ai/config.json",
-            "provider": { provider_key: provider_obj },
-            "model": format!("{}/{}", model_prefix, provider.model),
-        });
-
         merge_raw(&mut cfg, &provider.raw);
-
         Ok(serde_json::to_vec_pretty(&cfg)?)
     }
 
@@ -91,5 +102,73 @@ impl AgentDef for OpenCodeAgent {
 
     fn extra_env(&self, _provider: &ProviderConfig) -> HashMap<String, String> {
         HashMap::new()
+    }
+}
+
+/// Turn a provider name like "Ollama (local)" into a valid config key like "ollama-local".
+fn provider_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ProviderConfig, ProviderType};
+
+    fn make_provider(type_: ProviderType, model: &str, base_url: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            name: "local-ollama".into(),
+            provider_type: type_,
+            model: model.into(),
+            base_url: base_url.map(String::from),
+            auth: "none".into(),
+            raw: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn renders_openai_compatible_config() {
+        let agent = OpenCodeAgent;
+        let provider = make_provider(
+            ProviderType::OpenaiCompatible,
+            "gemma4:latest",
+            Some("http://192.168.1.4:30068/v1"),
+        );
+        let bytes = agent.render_config(&provider, None).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(v["model"], "local-ollama/gemma4:latest");
+        assert_eq!(v["provider"]["local-ollama"]["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(
+            v["provider"]["local-ollama"]["options"]["baseURL"],
+            "http://192.168.1.4:30068/v1"
+        );
+        assert_eq!(
+            v["provider"]["local-ollama"]["models"]["gemma4:latest"]["name"],
+            "gemma4:latest"
+        );
+    }
+
+    #[test]
+    fn renders_anthropic_config() {
+        let agent = OpenCodeAgent;
+        let provider = make_provider(ProviderType::Anthropic, "claude-sonnet-4-6", None);
+        let bytes = agent.render_config(&provider, None).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["model"], "anthropic/claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn provider_slug_examples() {
+        assert_eq!(provider_slug("local-ollama"), "local-ollama");
+        assert_eq!(provider_slug("Ollama (local)"), "ollama-local");
+        assert_eq!(provider_slug("My  Provider"), "my-provider");
     }
 }
