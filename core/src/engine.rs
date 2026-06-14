@@ -99,15 +99,23 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         .map(config::parse_memory_bytes)
         .transpose()?;
 
-    // --- 9. Container name (deterministic) ---
+    // --- 9. Container name + cache image ---
     let container_name = format!("agentbox-{}-{}", agent.id(), slug_from_path(&host_folder));
+    let cache_image = format!("agentbox-cache-{}:latest", agent.id());
+    let use_cache = docker.image_exists(&cache_image).await;
 
     // Remove any leftover container with this name (e.g. from a previous crash).
     let _ = docker.remove_container(&ContainerId(container_name.clone())).await;
 
+    let base_image = if use_cache {
+        cache_image.clone()
+    } else {
+        agent.base_image().to_string()
+    };
+
     let spec = ContainerSpec {
         name: container_name.clone(),
-        image: agent.base_image().to_string(),
+        image: base_image,
         bind_mounts,
         env_vars,
         cpu_limit: cfg.resources.cpus,
@@ -118,7 +126,6 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
     };
 
     // --- 10. Create + start container ---
-    eprintln!("Creating container `{container_name}`...");
     let container_id = docker.create_container(&spec).await?;
     docker.start_container(&container_id).await?;
 
@@ -128,16 +135,28 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         id: container_id.clone(),
     };
 
-    // --- 11. Install agent ---
-    eprintln!("Installing {} (this may take a minute)...", agent.id());
-    let result = docker
-        .exec_command(&container_id, &agent.install_command(), &[])
-        .await?;
-    if result.exit_code != 0 {
-        return Err(EngineError::Container(ContainerError::InstallFailed {
-            code: result.exit_code,
-            stderr: String::from_utf8_lossy(&result.stderr).into_owned(),
-        }));
+    // --- 11. Install agent (skipped if cached image exists) ---
+    if use_cache {
+        eprintln!("Using cached {} image.", agent.id());
+    } else {
+        eprint!("Installing {}... ", agent.id());
+        let result = docker
+            .exec_command(&container_id, &agent.install_command(), &[])
+            .await?;
+        if result.exit_code != 0 {
+            eprintln!("failed.");
+            return Err(EngineError::Container(ContainerError::InstallFailed {
+                code: result.exit_code,
+                stderr: String::from_utf8_lossy(&result.stderr).into_owned(),
+            }));
+        }
+        eprintln!("done.");
+        // Cache the installed image so future runs skip this step.
+        eprint!("Caching image... ");
+        match docker.commit_container(&container_id, &cache_image).await {
+            Ok(()) => eprintln!("done."),
+            Err(e) => eprintln!("warning: could not cache image: {e}"),
+        }
     }
 
     // --- 12. Write native config ---

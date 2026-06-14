@@ -75,6 +75,14 @@ pub trait ContainerBackend: Send + Sync {
     ) -> Result<i64, ContainerError>;
     async fn stop_container(&self, id: &ContainerId) -> Result<(), ContainerError>;
     async fn remove_container(&self, id: &ContainerId) -> Result<(), ContainerError>;
+    /// Returns true if an image with this exact name exists locally.
+    async fn image_exists(&self, image: &str) -> bool;
+    /// Commit the current container filesystem as a new local image.
+    async fn commit_container(
+        &self,
+        id: &ContainerId,
+        image_name: &str,
+    ) -> Result<(), ContainerError>;
 }
 
 pub struct DockerBackend {
@@ -220,17 +228,12 @@ impl ContainerBackend for DockerBackend {
             StartExecResults::Attached { mut output, .. } => {
                 while let Some(chunk) = output.next().await {
                     match chunk? {
-                        bollard::container::LogOutput::StdOut { message } => {
-                            let _ = std::io::stdout().write_all(&message);
+                        bollard::container::LogOutput::StdOut { message }
+                        | bollard::container::LogOutput::Console { message } => {
                             stdout.extend_from_slice(&message);
                         }
                         bollard::container::LogOutput::StdErr { message } => {
-                            let _ = std::io::stderr().write_all(&message);
                             stderr.extend_from_slice(&message);
-                        }
-                        bollard::container::LogOutput::Console { message } => {
-                            let _ = std::io::stdout().write_all(&message);
-                            stdout.extend_from_slice(&message);
                         }
                         _ => {}
                     }
@@ -412,6 +415,33 @@ impl ContainerBackend for DockerBackend {
             )
             .await
             .ok(); // best-effort
+        Ok(())
+    }
+
+    async fn image_exists(&self, image: &str) -> bool {
+        self.client.inspect_image(image).await.is_ok()
+    }
+
+    async fn commit_container(
+        &self,
+        id: &ContainerId,
+        image_name: &str,
+    ) -> Result<(), ContainerError> {
+        // Split "name:tag" for the bollard API.
+        let (repo, tag) = image_name
+            .split_once(':')
+            .unwrap_or((image_name, "latest"));
+        self.client
+            .commit_container(
+                bollard::image::CommitContainerOptions {
+                    container: id.0.as_str(),
+                    repo,
+                    tag,
+                    ..Default::default()
+                },
+                bollard::container::Config::<String>::default(),
+            )
+            .await?;
         Ok(())
     }
 }
