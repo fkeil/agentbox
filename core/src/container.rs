@@ -204,15 +204,33 @@ impl DockerBackend {
                 })
             }
             BackendChoice::Podman => {
-                let socket = podman_socket_path();
-                tracing::debug!("connecting to Podman socket: {socket}");
-                let client =
-                    bollard::Docker::connect_with_unix(&socket, 120, bollard::API_DEFAULT_VERSION)
+                #[cfg(unix)]
+                {
+                    let socket = podman_socket_path();
+                    tracing::debug!("connecting to Podman socket: {socket}");
+                    let client = bollard::Docker::connect_with_unix(
+                        &socket,
+                        120,
+                        bollard::API_DEFAULT_VERSION,
+                    )
+                    .map_err(ContainerError::Connect)?;
+                    Ok(Self {
+                        client,
+                        backend_name: "podman",
+                    })
+                }
+                #[cfg(not(unix))]
+                {
+                    // Podman on Windows exposes Docker Desktop-compatible named pipe/TCP.
+                    // Fall back to socket defaults (handles DOCKER_HOST and named pipes).
+                    tracing::debug!("connecting to Podman via socket defaults (Windows)");
+                    let client = bollard::Docker::connect_with_socket_defaults()
                         .map_err(ContainerError::Connect)?;
-                Ok(Self {
-                    client,
-                    backend_name: "podman",
-                })
+                    Ok(Self {
+                        client,
+                        backend_name: "podman",
+                    })
+                }
             }
             BackendChoice::Auto => {
                 // Try DOCKER_HOST / default Docker socket first, then Podman.
@@ -220,16 +238,20 @@ impl DockerBackend {
                     tracing::debug!("DOCKER_HOST set — using Docker backend");
                     return Self::connect_with_backend(&BackendChoice::Docker);
                 }
-                if std::path::Path::new("/var/run/docker.sock").exists() {
-                    tracing::debug!("found /var/run/docker.sock — using Docker backend");
-                    return Self::connect_with_backend(&BackendChoice::Docker);
-                }
-                let podman = podman_socket_path();
-                if std::path::Path::new(&podman).exists() {
-                    tracing::debug!("found Podman socket {podman} — using Podman backend");
-                    return Self::connect_with_backend(&BackendChoice::Podman);
+                #[cfg(unix)]
+                {
+                    if std::path::Path::new("/var/run/docker.sock").exists() {
+                        tracing::debug!("found /var/run/docker.sock — using Docker backend");
+                        return Self::connect_with_backend(&BackendChoice::Docker);
+                    }
+                    let podman = podman_socket_path();
+                    if std::path::Path::new(&podman).exists() {
+                        tracing::debug!("found Podman socket {podman} — using Podman backend");
+                        return Self::connect_with_backend(&BackendChoice::Podman);
+                    }
                 }
                 // Fall back to Docker defaults (will produce a clear error at first API call).
+                // On Windows this is the first stop: Docker Desktop uses a named pipe.
                 tracing::debug!("no socket found; attempting Docker defaults");
                 Self::connect_with_backend(&BackendChoice::Docker)
             }
@@ -239,6 +261,7 @@ impl DockerBackend {
 }
 
 /// Return the Podman user socket path following the XDG convention.
+#[cfg(unix)]
 fn podman_socket_path() -> String {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return format!("{dir}/podman/podman.sock");
