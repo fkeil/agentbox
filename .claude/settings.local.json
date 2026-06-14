@@ -15,7 +15,8 @@
       "Bash(git -C /home/fkeil/projects/agentBox status)",
       "Bash(git *)",
       "Bash(docker rm *)",
-      "Bash(docker run *)"
+      "Bash(docker run *)",
+      "Bash(cargo build *)"
     ]
   }
 }

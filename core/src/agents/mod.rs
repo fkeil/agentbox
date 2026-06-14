@@ -1,7 +1,9 @@
 use crate::config::{ProviderConfig, ProviderType};
 use std::collections::HashMap;
+use std::path::Path;
 
 pub mod claude_code;
+pub mod manifest_agent;
 pub mod opencode;
 
 #[derive(Debug, thiserror::Error)]
@@ -12,9 +14,9 @@ pub enum AgentError {
     Json(#[from] serde_json::Error),
 }
 
-/// Everything the engine needs to know about an agent. Implemented by
-/// hardcoded structs in Phase 1; Phase 2 will add a ManifestAgentDef that
-/// reads the same interface from YAML.
+/// Everything the engine needs to know about an agent. Hardcoded structs
+/// implement this for Phase 1 agents; ManifestAgentDef implements it for
+/// YAML-defined agents loaded at runtime.
 pub trait AgentDef: Send + Sync {
     fn id(&self) -> &str;
     fn base_image(&self) -> &str;
@@ -35,8 +37,6 @@ pub trait AgentDef: Send + Sync {
     ) -> Result<Vec<u8>, AgentError>;
     fn launch_command(&self) -> Vec<String>;
     /// Additional args appended to launch_command at runtime, given the provider.
-    /// Use this for provider-specific flags (e.g. model selection) that are only
-    /// known at run time. Default: no extra args.
     fn launch_args(&self, _provider: &ProviderConfig) -> Vec<String> {
         vec![]
     }
@@ -46,9 +46,17 @@ pub trait AgentDef: Send + Sync {
     fn extra_env(&self, provider: &ProviderConfig) -> HashMap<String, String>;
 }
 
-/// Resolve an agent by its ID. Returns None for unknown IDs.
-/// Phase 2 will extend this to also search loaded YAML manifests.
-pub fn find_agent(id: &str) -> Option<Box<dyn AgentDef>> {
+/// Resolve an agent by ID. Searches `manifests_dir` first (if provided),
+/// then falls back to hardcoded built-in agents.
+pub fn find_agent(id: &str, manifests_dir: Option<&Path>) -> Option<Box<dyn AgentDef>> {
+    // Manifest lookup takes priority so users can override built-ins.
+    if let Some(dir) = manifests_dir {
+        if let Some(manifest) = crate::manifest::find_manifest(dir, id) {
+            return Some(Box::new(manifest_agent::ManifestAgentDef::new(manifest)));
+        }
+    }
+
+    // Hardcoded fallbacks.
     match id {
         "claude-code" => Some(Box::new(claude_code::ClaudeCodeAgent)),
         "opencode" => Some(Box::new(opencode::OpenCodeAgent)),
@@ -56,7 +64,7 @@ pub fn find_agent(id: &str) -> Option<Box<dyn AgentDef>> {
     }
 }
 
-/// All known agent IDs, for error messages.
+/// Known built-in agent IDs (does not include manifest-only agents).
 pub fn known_agent_ids() -> &'static [&'static str] {
     &["claude-code", "opencode"]
 }

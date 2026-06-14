@@ -54,7 +54,7 @@ pub struct ProviderConfig {
     pub raw: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderType {
     Anthropic,
