@@ -16,6 +16,8 @@ enum Command {
     Up(commands::up::UpArgs),
     /// Stop and remove a named box
     Down(commands::down::DownArgs),
+    /// List available agents (manifests + built-ins)
+    Agents(commands::agents::AgentsArgs),
 }
 
 #[tokio::main]
@@ -24,6 +26,7 @@ async fn main() {
     let result = match cli.command {
         Command::Up(args) => commands::up::run(args).await,
         Command::Down(args) => commands::down::run(args).await,
+        Command::Agents(args) => commands::agents::run(args).await,
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");

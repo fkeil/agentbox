@@ -6,4 +6,4 @@ pub mod engine;
 pub mod manifest;
 pub mod provider;
 
-pub use engine::{down_box, run_box, EngineError};
+pub use engine::{down_box, run_box, run_box_config, EngineError};

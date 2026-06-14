@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agents::{self, AgentError};
 use crate::auth::AuthError;
-use crate::config::{self, ConfigError, ProviderType};
+use crate::config::{self, BoxConfig, ConfigError, ProviderType};
 use crate::container::{ContainerBackend, ContainerError, ContainerId, ContainerSpec, DockerBackend};
 use crate::provider::{self, ProviderError};
 
@@ -29,12 +29,9 @@ pub enum EngineError {
 /// Run a box from a config file. Blocks until the agent exits, then tears
 /// down the container (ephemeral lifecycle).
 pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
-    // --- 1. Parse + validate ---
     let cfg = config::parse_config(config_path)?;
     config::validate_config(&cfg)?;
 
-    // --- 2. Resolve agent ---
-    // Look for manifests/ next to the config file, then relative to CWD.
     let manifests_dir = config_path
         .parent()
         .map(|d| d.join("manifests"))
@@ -44,10 +41,18 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
             let d = cwd.join("manifests");
             d.is_dir().then_some(d)
         });
-    let agent = agents::find_agent(&cfg.agent.0, manifests_dir.as_deref())
+
+    run_box_config(cfg, manifests_dir.as_deref()).await
+}
+
+/// Run a box from an already-parsed config. Called by the TUI after the
+/// wizard collects settings, and by `run_box` after reading a config file.
+pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Result<(), EngineError> {
+    // --- 1. Resolve agent ---
+    let agent = agents::find_agent(&cfg.agent.0, manifests_dir)
         .ok_or_else(|| EngineError::UnknownAgent(cfg.agent.0.clone()))?;
 
-    // --- 3. Provider compatibility ---
+    // --- 2. Provider compatibility ---
     provider::check_provider_compat(
         agent.id(),
         &cfg.provider.provider_type,
@@ -60,15 +65,15 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         return Err(EngineError::Provider(ProviderError::MissingBaseUrl));
     }
 
-    // --- 4. Resolve auth ---
+    // --- 3. Resolve auth ---
     let auth_ref = cfg.provider.auth.clone();
     let resolved_secret = tokio::task::spawn_blocking(move || crate::auth::resolve_auth(&auth_ref))
         .await??;
 
-    // --- 5. Connect to Docker ---
+    // --- 4. Connect to Docker ---
     let docker = DockerBackend::connect()?;
 
-    // --- 6. Build env vars ---
+    // --- 5. Build env vars ---
     let mut env_vars: Vec<String> = Vec::new();
 
     if cfg.provider.auth != "none" {
@@ -87,7 +92,15 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         env_vars.push(format!("{k}={v}"));
     }
 
-    // --- 7. Resolve folder path + build mounts ---
+    // Resolve and inject extra_env entries from box.yaml.
+    for (key, val_ref) in &cfg.extra_env {
+        let val_ref = val_ref.clone();
+        let resolved = tokio::task::spawn_blocking(move || crate::auth::resolve_value(&val_ref))
+            .await??;
+        env_vars.push(format!("{key}={}", resolved.as_str()));
+    }
+
+    // --- 6. Resolve folder path + build mounts ---
     let host_folder = cfg
         .folder
         .path
@@ -101,7 +114,7 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         agent.workdir().to_string(),
     )];
 
-    // --- 8. Memory limit ---
+    // --- 7. Memory limit ---
     let memory_limit = cfg
         .resources
         .memory
@@ -109,7 +122,7 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         .map(config::parse_memory_bytes)
         .transpose()?;
 
-    // --- 9. Container name + cache image ---
+    // --- 8. Container name + cache image ---
     let container_name = format!("agentbox-{}-{}", agent.id(), slug_from_path(&host_folder));
     let cache_image = format!("agentbox-cache-{}:latest", agent.id());
     let use_cache = docker.image_exists(&cache_image).await;
@@ -135,17 +148,16 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         workdir: agent.workdir().to_string(),
     };
 
-    // --- 10. Create + start container ---
+    // --- 9. Create + start container ---
     let container_id = docker.create_container(&spec).await?;
     docker.start_container(&container_id).await?;
 
-    // Ensure we clean up on any exit path.
     let cleanup = CleanupGuard {
         docker: &docker,
         id: container_id.clone(),
     };
 
-    // --- 11. Install agent (skipped if cached image exists) ---
+    // --- 10. Install agent (skipped if cached image exists) ---
     if use_cache {
         eprintln!("Using cached {} image.", agent.id());
     } else {
@@ -161,7 +173,6 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
             }));
         }
         eprintln!("done.");
-        // Cache the installed image so future runs skip this step.
         eprint!("Caching image... ");
         match docker.commit_container(&container_id, &cache_image).await {
             Ok(()) => eprintln!("done."),
@@ -169,7 +180,7 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         }
     }
 
-    // --- 12. Write native config ---
+    // --- 11. Write native config ---
     if let Some(cfg_path) = agent.config_file_path() {
         let cfg_bytes = agent.render_config(
             &cfg.provider,
@@ -182,7 +193,7 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         docker.write_file(&container_id, cfg_path, &cfg_bytes).await?;
     }
 
-    // --- 13. Launch agent interactively ---
+    // --- 12. Launch agent interactively ---
     eprintln!("Launching {}...", agent.id());
     let mut launch_cmd = agent.launch_command();
     launch_cmd.extend(agent.launch_args(&cfg.provider));
@@ -190,7 +201,6 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         .attach_interactive(&container_id, &launch_cmd, agent.workdir())
         .await?;
 
-    // cleanup runs here via drop
     drop(cleanup);
 
     if exit_code != 0 {
@@ -201,7 +211,6 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
 }
 
 /// Stop and remove a named box.
-/// In Phase 1 (ephemeral only) this is a no-op: containers self-destruct on agent exit.
 pub async fn down_box(box_name: &str) -> Result<(), EngineError> {
     eprintln!(
         "Note: in Phase 1 all boxes are ephemeral and self-destruct when the agent exits.\n\
@@ -213,8 +222,6 @@ pub async fn down_box(box_name: &str) -> Result<(), EngineError> {
 // --- helpers ---
 
 fn host_gateway_hosts() -> Vec<String> {
-    // Docker Desktop injects host.docker.internal on macOS/Windows.
-    // On Linux we must add it manually.
     #[cfg(target_os = "linux")]
     {
         vec!["host.docker.internal:host-gateway".to_string()]
@@ -237,7 +244,6 @@ fn slug_from_path(p: &Path) -> String {
         .collect()
 }
 
-/// RAII guard that stops and removes the container on drop (best-effort).
 struct CleanupGuard<'a> {
     docker: &'a DockerBackend,
     id: crate::container::ContainerId,
@@ -245,8 +251,6 @@ struct CleanupGuard<'a> {
 
 impl Drop for CleanupGuard<'_> {
     fn drop(&mut self) {
-        // block_in_place lets us run async code from Drop without creating a
-        // nested runtime (which would panic inside the existing tokio runtime).
         tokio::task::block_in_place(|| {
             let handle = tokio::runtime::Handle::current();
             handle.block_on(async {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -12,6 +13,11 @@ pub struct BoxConfig {
     pub network: NetworkMode,
     #[serde(default)]
     pub resources: ResourceConfig,
+    /// Arbitrary extra env vars injected into the container. Values support
+    /// the same `${env:…}` / `${file:…}` / `${keychain:…}` syntax as `auth`,
+    /// and also bare literal strings.
+    #[serde(default)]
+    pub extra_env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

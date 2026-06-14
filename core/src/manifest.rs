@@ -101,6 +101,52 @@ pub enum ManifestError {
     Parse { path: PathBuf, source: serde_yaml::Error },
 }
 
+/// Validate a loaded manifest. Returns a list of error strings; empty = valid.
+pub fn validate_manifest(m: &AgentManifest) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    if m.id.is_empty() {
+        errors.push("id is required".into());
+    }
+    if m.base_image.is_empty() {
+        errors.push("base_image is required".into());
+    }
+    if m.install.packages.is_empty() {
+        errors.push("install.packages must not be empty".into());
+    }
+    if m.supported_providers.is_empty() {
+        errors.push("supported_providers must not be empty".into());
+    }
+    if m.launch.command.is_empty() {
+        errors.push("launch.command must not be empty".into());
+    }
+    if m.workdir.is_empty() {
+        errors.push("workdir is required".into());
+    }
+
+    if let Some(config) = &m.config {
+        if config.template.is_none() && config.by_provider_type.is_empty() {
+            errors.push("config must have either 'template' or 'by_provider_type'".into());
+        }
+        if !config.by_provider_type.is_empty() {
+            for pt in &m.supported_providers {
+                if !config.by_provider_type.contains_key(pt) {
+                    let name = match pt {
+                        ProviderType::Anthropic => "anthropic",
+                        ProviderType::Openai => "openai",
+                        ProviderType::OpenaiCompatible => "openai-compatible",
+                    };
+                    errors.push(format!(
+                        "config.by_provider_type is missing template for '{name}'"
+                    ));
+                }
+            }
+        }
+    }
+
+    errors
+}
+
 pub fn load_manifest(path: &Path) -> Result<AgentManifest, ManifestError> {
     let content = std::fs::read_to_string(path).map_err(|e| ManifestError::Io {
         path: path.to_owned(),
@@ -115,13 +161,44 @@ pub fn load_manifest(path: &Path) -> Result<AgentManifest, ManifestError> {
 /// Find a manifest for `agent_id` in `dir` by looking for `{dir}/{agent_id}.yaml`.
 pub fn find_manifest(dir: &Path, agent_id: &str) -> Option<AgentManifest> {
     let path = dir.join(format!("{agent_id}.yaml"));
-    if path.exists() {
-        match load_manifest(&path) {
-            Ok(m) => return Some(m),
-            Err(e) => eprintln!("Warning: failed to load manifest {}: {e}", path.display()),
+    if !path.exists() {
+        return None;
+    }
+    match load_manifest(&path) {
+        Ok(m) => {
+            let errs = validate_manifest(&m);
+            if !errs.is_empty() {
+                eprintln!("Warning: manifest {} has errors:", path.display());
+                for e in &errs {
+                    eprintln!("  - {e}");
+                }
+            }
+            Some(m)
+        }
+        Err(e) => {
+            eprintln!("Warning: failed to load manifest {}: {e}", path.display());
+            None
         }
     }
-    None
+}
+
+/// Return `(id, display_name)` for every parseable `*.yaml` file in `dir`.
+pub fn list_manifests(dir: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    let mut out: Vec<(String, String)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension()?.to_str()? != "yaml" {
+                return None;
+            }
+            load_manifest(&p).ok().map(|m| (m.id, m.display_name))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 #[cfg(test)]
