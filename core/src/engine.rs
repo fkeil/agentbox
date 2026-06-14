@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::agents::{self, AgentError};
 use crate::auth::AuthError;
 use crate::config::{self, ConfigError, ProviderType};
-use crate::container::{ContainerBackend, ContainerError, ContainerSpec, DockerBackend};
+use crate::container::{ContainerBackend, ContainerError, ContainerId, ContainerSpec, DockerBackend};
 use crate::provider::{self, ProviderError};
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +101,9 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
 
     // --- 9. Container name (deterministic) ---
     let container_name = format!("agentbox-{}-{}", agent.id(), slug_from_path(&host_folder));
+
+    // Remove any leftover container with this name (e.g. from a previous crash).
+    let _ = docker.remove_container(&ContainerId(container_name.clone())).await;
 
     let spec = ContainerSpec {
         name: container_name.clone(),
@@ -211,17 +214,15 @@ struct CleanupGuard<'a> {
 
 impl Drop for CleanupGuard<'_> {
     fn drop(&mut self) {
-        // We're in a sync Drop but need async calls. Spin up a small runtime
-        // just for cleanup so the container is never left behind.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        if let Ok(rt) = rt {
-            rt.block_on(async {
+        // block_in_place lets us run async code from Drop without creating a
+        // nested runtime (which would panic inside the existing tokio runtime).
+        tokio::task::block_in_place(|| {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(async {
                 let _ = self.docker.stop_container(&self.id).await;
                 let _ = self.docker.remove_container(&self.id).await;
             });
-        }
+        });
         eprintln!("Container removed.");
     }
 }

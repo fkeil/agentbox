@@ -1,5 +1,4 @@
 use super::{AgentDef, AgentError};
-use crate::agents::claude_code::merge_raw;
 use crate::config::{ProviderConfig, ProviderType};
 use std::collections::HashMap;
 
@@ -49,25 +48,17 @@ impl AgentDef for OpenCodeAgent {
     fn config_file_path(&self) -> Option<&str> {
         // OpenCode reads its config from ~/.config/opencode/config.json.
         // Running as root in the container means ~ = /root.
-        Some("/root/.config/opencode/config.json")
+        // OpenCode reads all provider config from env vars (OPENAI_API_KEY,
+        // OPENAI_BASE_URL, ANTHROPIC_API_KEY). No config file needed.
+        None
     }
 
     fn render_config(
         &self,
-        provider: &ProviderConfig,
+        _provider: &ProviderConfig,
         _resolved_key: Option<&str>,
     ) -> Result<Vec<u8>, AgentError> {
-        let mut cfg = serde_json::json!({
-            "model": provider.model,
-        });
-
-        if let Some(base_url) = &provider.base_url {
-            cfg["baseURL"] = serde_json::Value::String(base_url.clone());
-        }
-
-        merge_raw(&mut cfg, &provider.raw);
-
-        Ok(serde_json::to_vec_pretty(&cfg)?)
+        Ok(Vec::new())
     }
 
     fn launch_command(&self) -> Vec<String> {
