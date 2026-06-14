@@ -12,7 +12,9 @@
       "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs)",
       "Bash(sh -s -- -y --no-modify-path)",
       "Bash(git -C /home/fkeil/projects/agentBox add -A)",
-      "Bash(git -C /home/fkeil/projects/agentBox status)"
+      "Bash(git -C /home/fkeil/projects/agentBox status)",
+      "Bash(git *)",
+      "Bash(docker rm *)"
     ]
   }
 }
