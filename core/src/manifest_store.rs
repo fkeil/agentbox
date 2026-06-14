@@ -12,9 +12,15 @@ use crate::profile::user_manifests_dir;
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestStoreError {
     #[error("I/O error for `{path}`: {source}")]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("YAML parse error in `{path}`: {source}")]
-    Parse { path: PathBuf, source: serde_yaml::Error },
+    Parse {
+        path: PathBuf,
+        source: serde_yaml::Error,
+    },
     #[error("network error downloading manifest: {0}")]
     Network(#[from] reqwest::Error),
     #[error("manifest `{0}` not found in user store")]
@@ -69,10 +75,7 @@ pub fn remove_manifest(agent_id: &str) -> Result<(), ManifestStoreError> {
     if !path.exists() {
         return Err(ManifestStoreError::NotFound(agent_id.to_string()));
     }
-    std::fs::remove_file(&path).map_err(|e| ManifestStoreError::Io {
-        path,
-        source: e,
-    })
+    std::fs::remove_file(&path).map_err(|e| ManifestStoreError::Io { path, source: e })
 }
 
 /// List all manifests in the user store.

@@ -140,7 +140,10 @@ fn render_template(template: &str, provider: &ProviderConfig) -> String {
     template
         .replace("{{model}}", &provider.model)
         .replace("{{base_url}}", provider.base_url.as_deref().unwrap_or(""))
-        .replace("{{provider_type}}", provider_type_str(&provider.provider_type))
+        .replace(
+            "{{provider_type}}",
+            provider_type_str(&provider.provider_type),
+        )
         .replace("{{provider_name}}", &provider.name)
         .replace("{{provider_slug}}", &slug)
 }

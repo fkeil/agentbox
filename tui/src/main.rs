@@ -36,9 +36,10 @@ async fn main() {
 
     let outcome = match result {
         wizard::WizardResult::Cancelled => Ok(()),
-        wizard::WizardResult::Launch { config, manifests_dir } => {
-            engine::run_box_config(*config, manifests_dir.as_deref()).await
-        }
+        wizard::WizardResult::Launch {
+            config,
+            manifests_dir,
+        } => engine::run_box_config(*config, manifests_dir.as_deref()).await,
         wizard::WizardResult::Attach { box_name } => engine::attach_box(&box_name).await,
     };
 

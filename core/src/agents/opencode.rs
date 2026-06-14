@@ -160,7 +160,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
         assert_eq!(v["model"], "local-ollama/gemma4:latest");
-        assert_eq!(v["provider"]["local-ollama"]["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(
+            v["provider"]["local-ollama"]["npm"],
+            "@ai-sdk/openai-compatible"
+        );
         assert_eq!(
             v["provider"]["local-ollama"]["options"]["baseURL"],
             "http://192.168.1.4:30068/v1"

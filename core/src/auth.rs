@@ -105,9 +105,7 @@ pub fn resolve_auth(reference: &str) -> Result<ResolvedSecret, AuthError> {
 /// reference doesn't match this prefix.
 fn strip_ref<'a>(reference: &'a str, prefix: &str) -> Option<&'a str> {
     let tag = format!("${{{prefix}:");
-    reference
-        .strip_prefix(tag.as_str())?
-        .strip_suffix('}')
+    reference.strip_prefix(tag.as_str())?.strip_suffix('}')
 }
 
 #[cfg(test)]

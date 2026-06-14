@@ -48,97 +48,97 @@ const THEMES: [ThemeColors; 5] = [
     // 0 · Dark (default — deep navy)
     ThemeColors {
         name: "Dark",
-        border:        Color::Rgb(46,  50,  69),
-        border_focused:Color::Rgb(120, 160, 255),
-        border_header: Color::Rgb(94,  147, 242),
-        text:          Color::Rgb(208, 214, 240),
-        text_dim:      Color::Rgb(107, 116, 148),
-        selection:     Color::Rgb(120, 160, 255),
-        running:       Color::Rgb(76,  175, 125),
-        stopped:       Color::Rgb(107, 116, 148),
-        orphaned:      Color::Rgb(224, 92,  92),
-        accent:        Color::Rgb(94,  147, 242),
-        success:       Color::Rgb(76,  175, 125),
-        error:         Color::Rgb(224, 92,  92),
-        new_item:      Color::Rgb(94,  147, 242),
-        cursor_bg:     Color::Rgb(120, 160, 255),
-        cursor_fg:     Color::Black,
+        border: Color::Rgb(46, 50, 69),
+        border_focused: Color::Rgb(120, 160, 255),
+        border_header: Color::Rgb(94, 147, 242),
+        text: Color::Rgb(208, 214, 240),
+        text_dim: Color::Rgb(107, 116, 148),
+        selection: Color::Rgb(120, 160, 255),
+        running: Color::Rgb(76, 175, 125),
+        stopped: Color::Rgb(107, 116, 148),
+        orphaned: Color::Rgb(224, 92, 92),
+        accent: Color::Rgb(94, 147, 242),
+        success: Color::Rgb(76, 175, 125),
+        error: Color::Rgb(224, 92, 92),
+        new_item: Color::Rgb(94, 147, 242),
+        cursor_bg: Color::Rgb(120, 160, 255),
+        cursor_fg: Color::Black,
     },
     // 1 · Dracula
     ThemeColors {
         name: "Dracula",
-        border:        Color::Rgb(68,  71,  90),
-        border_focused:Color::Rgb(189, 147, 249),
+        border: Color::Rgb(68, 71, 90),
+        border_focused: Color::Rgb(189, 147, 249),
         border_header: Color::Rgb(255, 121, 198),
-        text:          Color::Rgb(248, 248, 242),
-        text_dim:      Color::Rgb(98,  114, 164),
-        selection:     Color::Rgb(189, 147, 249),
-        running:       Color::Rgb(80,  250, 123),
-        stopped:       Color::Rgb(98,  114, 164),
-        orphaned:      Color::Rgb(255, 85,  85),
-        accent:        Color::Rgb(139, 233, 253),
-        success:       Color::Rgb(80,  250, 123),
-        error:         Color::Rgb(255, 85,  85),
-        new_item:      Color::Rgb(139, 233, 253),
-        cursor_bg:     Color::Rgb(189, 147, 249),
-        cursor_fg:     Color::Black,
+        text: Color::Rgb(248, 248, 242),
+        text_dim: Color::Rgb(98, 114, 164),
+        selection: Color::Rgb(189, 147, 249),
+        running: Color::Rgb(80, 250, 123),
+        stopped: Color::Rgb(98, 114, 164),
+        orphaned: Color::Rgb(255, 85, 85),
+        accent: Color::Rgb(139, 233, 253),
+        success: Color::Rgb(80, 250, 123),
+        error: Color::Rgb(255, 85, 85),
+        new_item: Color::Rgb(139, 233, 253),
+        cursor_bg: Color::Rgb(189, 147, 249),
+        cursor_fg: Color::Black,
     },
     // 2 · Nord
     ThemeColors {
         name: "Nord",
-        border:        Color::Rgb(59,  66,  82),
-        border_focused:Color::Rgb(136, 192, 208),
-        border_header: Color::Rgb(94,  129, 172),
-        text:          Color::Rgb(236, 239, 244),
-        text_dim:      Color::Rgb(76,  86,  106),
-        selection:     Color::Rgb(136, 192, 208),
-        running:       Color::Rgb(163, 190, 140),
-        stopped:       Color::Rgb(76,  86,  106),
-        orphaned:      Color::Rgb(191, 97,  106),
-        accent:        Color::Rgb(129, 161, 193),
-        success:       Color::Rgb(163, 190, 140),
-        error:         Color::Rgb(191, 97,  106),
-        new_item:      Color::Rgb(129, 161, 193),
-        cursor_bg:     Color::Rgb(136, 192, 208),
-        cursor_fg:     Color::Black,
+        border: Color::Rgb(59, 66, 82),
+        border_focused: Color::Rgb(136, 192, 208),
+        border_header: Color::Rgb(94, 129, 172),
+        text: Color::Rgb(236, 239, 244),
+        text_dim: Color::Rgb(76, 86, 106),
+        selection: Color::Rgb(136, 192, 208),
+        running: Color::Rgb(163, 190, 140),
+        stopped: Color::Rgb(76, 86, 106),
+        orphaned: Color::Rgb(191, 97, 106),
+        accent: Color::Rgb(129, 161, 193),
+        success: Color::Rgb(163, 190, 140),
+        error: Color::Rgb(191, 97, 106),
+        new_item: Color::Rgb(129, 161, 193),
+        cursor_bg: Color::Rgb(136, 192, 208),
+        cursor_fg: Color::Black,
     },
     // 3 · Catppuccin Mocha
     ThemeColors {
         name: "Catppuccin",
-        border:        Color::Rgb(88,  91,  112),
-        border_focused:Color::Rgb(180, 190, 254),
+        border: Color::Rgb(88, 91, 112),
+        border_focused: Color::Rgb(180, 190, 254),
         border_header: Color::Rgb(245, 194, 231),
-        text:          Color::Rgb(205, 214, 244),
-        text_dim:      Color::Rgb(88,  91,  112),
-        selection:     Color::Rgb(180, 190, 254),
-        running:       Color::Rgb(166, 227, 161),
-        stopped:       Color::Rgb(88,  91,  112),
-        orphaned:      Color::Rgb(243, 139, 168),
-        accent:        Color::Rgb(137, 180, 250),
-        success:       Color::Rgb(166, 227, 161),
-        error:         Color::Rgb(243, 139, 168),
-        new_item:      Color::Rgb(148, 226, 213),
-        cursor_bg:     Color::Rgb(180, 190, 254),
-        cursor_fg:     Color::Black,
+        text: Color::Rgb(205, 214, 244),
+        text_dim: Color::Rgb(88, 91, 112),
+        selection: Color::Rgb(180, 190, 254),
+        running: Color::Rgb(166, 227, 161),
+        stopped: Color::Rgb(88, 91, 112),
+        orphaned: Color::Rgb(243, 139, 168),
+        accent: Color::Rgb(137, 180, 250),
+        success: Color::Rgb(166, 227, 161),
+        error: Color::Rgb(243, 139, 168),
+        new_item: Color::Rgb(148, 226, 213),
+        cursor_bg: Color::Rgb(180, 190, 254),
+        cursor_fg: Color::Black,
     },
     // 4 · Gruvbox Dark
     ThemeColors {
         name: "Gruvbox",
-        border:        Color::Rgb(80,  73,  69),
-        border_focused:Color::Rgb(215, 153, 33),
+        border: Color::Rgb(80, 73, 69),
+        border_focused: Color::Rgb(215, 153, 33),
         border_header: Color::Rgb(152, 151, 26),
-        text:          Color::Rgb(235, 219, 178),
-        text_dim:      Color::Rgb(124, 111, 100),
-        selection:     Color::Rgb(215, 153, 33),
-        running:       Color::Rgb(184, 187, 38),
-        stopped:       Color::Rgb(124, 111, 100),
-        orphaned:      Color::Rgb(251, 73,  52),
-        accent:        Color::Rgb(131, 165, 152),
-        success:       Color::Rgb(184, 187, 38),
-        error:         Color::Rgb(251, 73,  52),
-        new_item:      Color::Rgb(131, 165, 152),
-        cursor_bg:     Color::Rgb(215, 153, 33),
-        cursor_fg:     Color::Black,
+        text: Color::Rgb(235, 219, 178),
+        text_dim: Color::Rgb(124, 111, 100),
+        selection: Color::Rgb(215, 153, 33),
+        running: Color::Rgb(184, 187, 38),
+        stopped: Color::Rgb(124, 111, 100),
+        orphaned: Color::Rgb(251, 73, 52),
+        accent: Color::Rgb(131, 165, 152),
+        success: Color::Rgb(184, 187, 38),
+        error: Color::Rgb(251, 73, 52),
+        new_item: Color::Rgb(131, 165, 152),
+        cursor_bg: Color::Rgb(215, 153, 33),
+        cursor_fg: Color::Black,
     },
 ];
 
@@ -176,9 +176,9 @@ pub fn run() -> anyhow::Result<WizardResult> {
 
 #[derive(PartialEq, Clone, Copy)]
 enum Screen {
-    Home,         // list existing boxes + "New box"
-    BoxDetail,    // manage a selected box
-    Images,       // cached agent images
+    Home,      // list existing boxes + "New box"
+    BoxDetail, // manage a selected box
+    Images,    // cached agent images
     WizardAgent,
     WizardFolder,
     WizardLifecycle,
@@ -249,7 +249,10 @@ impl Input {
             };
             Text::from(Line::from(vec![
                 Span::raw(before),
-                Span::styled(cur, Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg)),
+                Span::styled(
+                    cur,
+                    Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg),
+                ),
                 Span::raw(after),
             ]))
         } else {
@@ -281,11 +284,20 @@ impl MultilineInput {
         };
         let row = lines.len().saturating_sub(1);
         let col = lines.last().map(|l| l.len()).unwrap_or(0);
-        Self { lines, row, col, scroll: 0 }
+        Self {
+            lines,
+            row,
+            col,
+            scroll: 0,
+        }
     }
 
     fn value(&self) -> String {
-        self.lines.iter().map(|l| l.iter().collect::<String>()).collect::<Vec<_>>().join("\n")
+        self.lines
+            .iter()
+            .map(|l| l.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn on_key(&mut self, key: &KeyEvent, vis_rows: usize) {
@@ -333,26 +345,37 @@ impl MultilineInput {
             _ => {}
         }
         // Keep scroll in sync with cursor
-        if self.row < self.scroll { self.scroll = self.row; }
+        if self.row < self.scroll {
+            self.scroll = self.row;
+        }
         if vis_rows > 0 && self.row >= self.scroll + vis_rows {
             self.scroll = self.row + 1 - vis_rows;
         }
     }
 
     fn widget<'a>(&self, title: &'a str, theme: &ThemeColors) -> Paragraph<'a> {
-        let lines: Vec<Line> = self.lines.iter().enumerate()
+        let lines: Vec<Line> = self
+            .lines
+            .iter()
+            .enumerate()
             .skip(self.scroll)
             .map(|(r, chars)| {
                 if r == self.row {
                     let before: String = chars[..self.col].iter().collect();
                     let (cur, after): (String, String) = if self.col < chars.len() {
-                        (chars[self.col].to_string(), chars[self.col+1..].iter().collect())
+                        (
+                            chars[self.col].to_string(),
+                            chars[self.col + 1..].iter().collect(),
+                        )
                     } else {
                         (" ".to_string(), String::new())
                     };
                     Line::from(vec![
                         Span::raw(before),
-                        Span::styled(cur, Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg)),
+                        Span::styled(
+                            cur,
+                            Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg),
+                        ),
                         Span::raw(after),
                     ])
                 } else {
@@ -362,7 +385,9 @@ impl MultilineInput {
             .collect();
 
         Paragraph::new(lines).block(
-            Block::default().title(title).borders(Borders::ALL)
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.border_focused)),
         )
     }
@@ -402,18 +427,26 @@ enum BoxAction {
 const PERSISTENT_ACTIONS: [(BoxAction, &str); 3] = [
     (BoxAction::Attach, "Attach  (reconnect and launch agent)"),
     (BoxAction::Stop, "Stop    (halt container, keep state)"),
-    (BoxAction::Remove, "Remove  (delete container + state volume)"),
+    (
+        BoxAction::Remove,
+        "Remove  (delete container + state volume)",
+    ),
 ];
 
 const DAEMON_ACTIONS: [(BoxAction, &str); 3] = [
-    (BoxAction::Attach, "Status  (show running state + bound ports)"),
+    (
+        BoxAction::Attach,
+        "Status  (show running state + bound ports)",
+    ),
     (BoxAction::Stop, "Stop    (halt daemon, preserve state)"),
-    (BoxAction::Remove, "Remove  (delete container + state volume)"),
+    (
+        BoxAction::Remove,
+        "Remove  (delete container + state volume)",
+    ),
 ];
 
-const EPHEMERAL_ACTIONS: [(BoxAction, &str); 1] = [
-    (BoxAction::Kill, "Kill    (force-remove orphaned container)"),
-];
+const EPHEMERAL_ACTIONS: [(BoxAction, &str); 1] =
+    [(BoxAction::Kill, "Kill    (force-remove orphaned container)")];
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -575,11 +608,17 @@ impl App {
     }
 
     fn selected_agent_id(&self) -> &str {
-        self.agents.get(self.agent_idx).map(|a| a.id.as_str()).unwrap_or("")
+        self.agents
+            .get(self.agent_idx)
+            .map(|a| a.id.as_str())
+            .unwrap_or("")
     }
 
     fn selected_agent_is_daemon(&self) -> bool {
-        self.agents.get(self.agent_idx).map(|a| a.is_daemon).unwrap_or(false)
+        self.agents
+            .get(self.agent_idx)
+            .map(|a| a.is_daemon)
+            .unwrap_or(false)
     }
 
     fn is_pi(&self) -> bool {
@@ -590,13 +629,21 @@ impl App {
         let pt = self.current_provider_type().clone();
         let base_url = if pt == ProviderType::OpenaiCompatible {
             let s = self.prov_base_url.value();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         } else {
             None
         };
         let name = if self.is_persistent() {
             let n = self.box_name.value();
-            if n.is_empty() { None } else { Some(n) }
+            if n.is_empty() {
+                None
+            } else {
+                Some(n)
+            }
         } else {
             None
         };
@@ -605,7 +652,11 @@ impl App {
             name,
             project_name: {
                 let pn = self.project_name.value();
-                if pn.trim().is_empty() { None } else { Some(pn) }
+                if pn.trim().is_empty() {
+                    None
+                } else {
+                    Some(pn)
+                }
             },
             folder: FolderConfig {
                 path: PathBuf::from(self.folder.value()),
@@ -636,7 +687,10 @@ impl App {
                 },
             },
             network: NetworkMode::Open,
-            resources: ResourceConfig { cpus: None, memory: None },
+            resources: ResourceConfig {
+                cpus: None,
+                memory: None,
+            },
             extra_env: HashMap::new(),
             backend: agentbox_core::config::BackendChoice::Auto,
         }
@@ -703,10 +757,7 @@ fn event_loop(
             // Ctrl+T: cycle color theme globally from any screen
             if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 app.theme_idx = (app.theme_idx + 1) % THEMES.len();
-                app.status_msg = Some((
-                    format!("Theme: {}", THEMES[app.theme_idx].name),
-                    false,
-                ));
+                app.status_msg = Some((format!("Theme: {}", THEMES[app.theme_idx].name), false));
                 continue;
             }
             match handle_key(app, key) {
@@ -960,7 +1011,8 @@ fn handle_folder(app: &mut App, key: KeyEvent) -> Action {
             // Pre-fill box name suggestion
             if app.box_name.value().is_empty() {
                 let agent_id = app.selected_agent_id().to_string();
-                let basename = path.file_name()
+                let basename = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 if !agent_id.is_empty() && !basename.is_empty() {
@@ -1034,11 +1086,19 @@ fn handle_provider(app: &mut App, key: KeyEvent) -> Action {
             app.prov_focus = (app.prov_focus + 1) % 5;
         }
         KeyCode::BackTab => {
-            app.prov_focus = if app.prov_focus == 0 { 4 } else { app.prov_focus - 1 };
+            app.prov_focus = if app.prov_focus == 0 {
+                4
+            } else {
+                app.prov_focus - 1
+            };
         }
         KeyCode::Enter if focus == 4 => {
             app.prov_focus = 0;
-            app.screen = if app.is_pi() { Screen::WizardPiModels } else { Screen::WizardSummary };
+            app.screen = if app.is_pi() {
+                Screen::WizardPiModels
+            } else {
+                Screen::WizardSummary
+            };
         }
         KeyCode::Enter => {
             app.prov_focus = (focus + 1) % 5;
@@ -1171,12 +1231,20 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(msg.as_str())
             .style(style)
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.border)))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(t.border)),
+            )
     } else {
         Paragraph::new(help.as_str())
             .style(Style::default().fg(t.text_dim))
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.border)))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(t.border)),
+            )
     };
 
     frame.render_widget(content, area);
@@ -1221,7 +1289,10 @@ fn render_logo(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("─────", Style::default().fg(d)),
             Span::styled("  ║", Style::default().fg(c)),
             Span::styled("   ", Style::default()),
-            Span::styled("run AI agents in isolated containers", Style::default().fg(w)),
+            Span::styled(
+                "run AI agents in isolated containers",
+                Style::default().fg(w),
+            ),
         ]),
         Line::from(vec![
             Span::styled("   ", Style::default()),
@@ -1353,10 +1424,12 @@ fn render_box_detail(frame: &mut Frame, area: Rect, app: &App) {
     let action_items: Vec<ListItem> = app
         .detail_actions()
         .iter()
-        .map(|(_, label)| ListItem::new(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(*label, Style::default().fg(t.text)),
-        ])))
+        .map(|(_, label)| {
+            ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(*label, Style::default().fg(t.text)),
+            ]))
+        })
         .collect();
     let list = List::new(action_items)
         .block(
@@ -1412,7 +1485,10 @@ fn render_images(frame: &mut Frame, area: Rect, app: &App) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(format!(" Cache images ({}) — d/Del to remove ", app.cache_images.len()))
+                .title(format!(
+                    " Cache images ({}) — d/Del to remove ",
+                    app.cache_images.len()
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(t.border)),
         )
@@ -1420,7 +1496,11 @@ fn render_images(frame: &mut Frame, area: Rect, app: &App) {
         .highlight_style(Style::default().fg(t.selection).bold());
 
     let mut state = app.images_list_state.clone();
-    state.select(if app.cache_images.is_empty() { None } else { Some(app.images_idx) });
+    state.select(if app.cache_images.is_empty() {
+        None
+    } else {
+        Some(app.images_idx)
+    });
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -1435,10 +1515,7 @@ fn render_agent(frame: &mut Frame, area: Rect, app: &App) {
                     format!("  {:<24}", a.display_name),
                     Style::default().fg(t.text).bold(),
                 ),
-                Span::styled(
-                    format!("({})", a.id),
-                    Style::default().fg(t.text_dim),
-                ),
+                Span::styled(format!("({})", a.id), Style::default().fg(t.text_dim)),
             ]))
         })
         .collect();
@@ -1466,7 +1543,10 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Min(0),
     ])
     .split(area);
-    frame.render_widget(app.folder.widget("Folder path", app.folder_focus == 0, t), chunks[0]);
+    frame.render_widget(
+        app.folder.widget("Folder path", app.folder_focus == 0, t),
+        chunks[0],
+    );
     if let Some(err) = &app.folder_err {
         frame.render_widget(
             Paragraph::new(err.as_str()).style(Style::default().fg(t.error)),
@@ -1474,7 +1554,11 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
     frame.render_widget(
-        app.project_name.widget("Project name  (optional — shown in window title and box list)", app.folder_focus == 1, t),
+        app.project_name.widget(
+            "Project name  (optional — shown in window title and box list)",
+            app.folder_focus == 1,
+            t,
+        ),
         chunks[2],
     );
 }
@@ -1485,7 +1569,11 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
     let show_name = app.is_persistent();
     let chunks = Layout::vertical([
         Constraint::Length(3),
-        if show_name { Constraint::Length(3) } else { Constraint::Length(0) },
+        if show_name {
+            Constraint::Length(3)
+        } else {
+            Constraint::Length(0)
+        },
         Constraint::Min(0),
     ])
     .split(area);
@@ -1512,10 +1600,17 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "Fresh container every run, removed on exit"
     };
-    let title = if daemon_locked { "Lifecycle  (locked)" } else { "Lifecycle  (← →)" };
+    let title = if daemon_locked {
+        "Lifecycle  (locked)"
+    } else {
+        "Lifecycle  (← →)"
+    };
     let type_text = Line::from(vec![
         Span::styled(left, Style::default().fg(t.text_dim)),
-        Span::styled(labels[app.lifecycle_idx], Style::default().fg(t.text).bold()),
+        Span::styled(
+            labels[app.lifecycle_idx],
+            Style::default().fg(t.text).bold(),
+        ),
         Span::styled(right, Style::default().fg(t.text_dim)),
         Span::styled(format!("  — {desc}"), Style::default().fg(t.text_dim)),
     ]);
@@ -1529,7 +1624,8 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
 
     if show_name {
         frame.render_widget(
-            app.box_name.widget("Box name  (used to reconnect)", app.prov_focus == 1, t),
+            app.box_name
+                .widget("Box name  (used to reconnect)", app.prov_focus == 1, t),
             chunks[1],
         );
     }
@@ -1549,7 +1645,11 @@ fn render_provider(frame: &mut Frame, area: Rect, app: &App) {
     .split(area);
 
     let left = if app.prov_type_idx > 0 { "◀ " } else { "  " };
-    let right = if app.prov_type_idx + 1 < PROVIDER_TYPES.len() { " ▶" } else { "  " };
+    let right = if app.prov_type_idx + 1 < PROVIDER_TYPES.len() {
+        " ▶"
+    } else {
+        "  "
+    };
     let focused = app.prov_focus == 0;
     let border_style = if focused {
         Style::default().fg(t.border_focused)
@@ -1579,12 +1679,27 @@ fn render_provider(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "Provider name"
     };
-    frame.render_widget(app.prov_name.widget(prov_name_title, app.prov_focus == 1, t), chunks[2]);
-    frame.render_widget(app.prov_model.widget("Model", app.prov_focus == 2, t), chunks[3]);
+    frame.render_widget(
+        app.prov_name
+            .widget(prov_name_title, app.prov_focus == 1, t),
+        chunks[2],
+    );
+    frame.render_widget(
+        app.prov_model.widget("Model", app.prov_focus == 2, t),
+        chunks[3],
+    );
 
     let compat = *app.current_provider_type() == ProviderType::OpenaiCompatible;
-    let url_title = if compat { "Base URL" } else { "Base URL  (not needed for this provider)" };
-    let url_style = if compat { Style::default() } else { Style::default().fg(t.text_dim) };
+    let url_title = if compat {
+        "Base URL"
+    } else {
+        "Base URL  (not needed for this provider)"
+    };
+    let url_style = if compat {
+        Style::default()
+    } else {
+        Style::default().fg(t.text_dim)
+    };
     frame.render_widget(
         app.prov_base_url
             .widget(url_title, app.prov_focus == 3, t)
@@ -1593,8 +1708,11 @@ fn render_provider(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     frame.render_widget(
-        app.prov_auth
-            .widget("Auth  (${env:…} / ${file:…} / ${keychain:…} / none / oauth)", app.prov_focus == 4, t),
+        app.prov_auth.widget(
+            "Auth  (${env:…} / ${file:…} / ${keychain:…} / none / oauth)",
+            app.prov_focus == 4,
+            t,
+        ),
         chunks[5],
     );
 }
@@ -1647,7 +1765,11 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
     };
     let project_line = {
         let pn = app.project_name.value();
-        if pn.trim().is_empty() { String::new() } else { format!("  Project:       {pn}\n") }
+        if pn.trim().is_empty() {
+            String::new()
+        } else {
+            format!("  Project:       {pn}\n")
+        }
     };
 
     let text = format!(
@@ -1678,7 +1800,9 @@ fn find_manifests_dir() -> Option<PathBuf> {
     // Check cwd first (normal dev workflow)
     if let Ok(cwd) = std::env::current_dir() {
         let d = cwd.join("manifests");
-        if d.is_dir() { return Some(d); }
+        if d.is_dir() {
+            return Some(d);
+        }
     }
     // Walk up from executable (handles GUI-launched terminals)
     let mut dir = std::env::current_exe()
@@ -1686,7 +1810,9 @@ fn find_manifests_dir() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
     while let Some(d) = dir {
         let candidate = d.join("manifests");
-        if candidate.is_dir() { return Some(candidate); }
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
         dir = d.parent().map(|p| p.to_path_buf());
     }
     None

@@ -9,9 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{
-    BackendChoice, Lifecycle, NetworkMode, ProviderConfig, ResourceConfig,
-};
+use crate::config::{BackendChoice, Lifecycle, NetworkMode, ProviderConfig, ResourceConfig};
 
 /// A saved preset for quick box creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,9 +36,15 @@ pub struct Profile {
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileError {
     #[error("cannot read profiles directory `{path}`: {source}")]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("YAML error in profile `{name}`: {source}")]
-    Parse { name: String, source: serde_yaml::Error },
+    Parse {
+        name: String,
+        source: serde_yaml::Error,
+    },
     #[error("profile `{0}` not found")]
     NotFound(String),
     #[error("profile `{0}` already exists; use --force to overwrite")]
@@ -49,14 +53,20 @@ pub enum ProfileError {
 
 /// Return the user profile directory, creating it if absent.
 pub fn profiles_dir() -> PathBuf {
-    let base = dirs_home().join(".config").join("agentbox").join("profiles");
+    let base = dirs_home()
+        .join(".config")
+        .join("agentbox")
+        .join("profiles");
     let _ = std::fs::create_dir_all(&base);
     base
 }
 
 /// Return the user manifest directory (for `agentbox manifest add`).
 pub fn user_manifests_dir() -> PathBuf {
-    let base = dirs_home().join(".config").join("agentbox").join("manifests");
+    let base = dirs_home()
+        .join(".config")
+        .join("agentbox")
+        .join("manifests");
     let _ = std::fs::create_dir_all(&base);
     base
 }
@@ -128,10 +138,7 @@ pub fn remove_profile(name: &str) -> Result<(), ProfileError> {
     if !path.exists() {
         return Err(ProfileError::NotFound(name.to_string()));
     }
-    std::fs::remove_file(&path).map_err(|e| ProfileError::Io {
-        path,
-        source: e,
-    })
+    std::fs::remove_file(&path).map_err(|e| ProfileError::Io { path, source: e })
 }
 
 #[cfg(test)]
