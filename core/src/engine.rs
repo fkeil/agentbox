@@ -265,6 +265,34 @@ pub async fn attach_box(box_name: &str) -> Result<(), EngineError> {
         .await
         .map_err(|_| ContainerError::BoxNotFound(box_name.to_string()))?;
 
+    // Daemon boxes are not interactive — just report their running status.
+    if labels.get("agentbox.daemon").map(|v| v == "true").unwrap_or(false) {
+        let status = docker.container_status(&container_name).await;
+        match status {
+            Some(ContainerStatus::Running) => {
+                eprintln!("Daemon '{box_name}' is running.");
+                // Show bound ports from live container info.
+                if let Ok(boxes) = docker.list_boxes().await {
+                    if let Some(b) = boxes.iter().find(|b| b.box_name == box_name) {
+                        for (h, c) in &b.bound_ports {
+                            eprintln!("  localhost:{h} → container:{c}");
+                        }
+                    }
+                }
+            }
+            Some(ContainerStatus::Stopped) => {
+                eprintln!("Daemon '{box_name}' is stopped.");
+                eprintln!("Start with: agentbox up --config <box.yaml>");
+            }
+            None => {
+                return Err(EngineError::Container(ContainerError::BoxNotFound(
+                    box_name.to_string(),
+                )));
+            }
+        }
+        return Ok(());
+    }
+
     let workdir = labels
         .get("agentbox.workdir")
         .map(|s| s.as_str())
@@ -719,11 +747,22 @@ async fn run_daemon(
     let container_name = format!("agentbox-{box_name}");
     let state_volume = format!("agentbox-state-{box_name}");
 
-    // If already running, just report status and return.
-    if let Some(ContainerStatus::Running) = docker.container_status(&container_name).await {
-        eprintln!("Daemon '{box_name}' is already running.");
-        print_daemon_ports(daemon_cfg);
-        return Ok(());
+    // If the container already exists, handle without re-creating.
+    match docker.container_status(&container_name).await {
+        Some(ContainerStatus::Running) => {
+            eprintln!("Daemon '{box_name}' is already running.");
+            print_daemon_ports(daemon_cfg);
+            return Ok(());
+        }
+        Some(ContainerStatus::Stopped) => {
+            let id = ContainerId(container_name.clone());
+            docker.start_container(&id).await?;
+            eprintln!("Daemon '{box_name}' restarted.");
+            print_daemon_ports(daemon_cfg);
+            eprintln!("Stop with: agentbox down {box_name}");
+            return Ok(());
+        }
+        None => {}
     }
 
     // Build port bindings from daemon manifest.

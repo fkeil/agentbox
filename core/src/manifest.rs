@@ -301,6 +301,8 @@ pub struct ManifestMeta {
     pub id: String,
     pub display_name: String,
     pub oauth_supported: bool,
+    /// True when this agent runs as a long-lived daemon (not an interactive session).
+    pub is_daemon: bool,
 }
 
 /// Return rich metadata for every parseable `*.yaml` file in `dir`.
@@ -321,6 +323,7 @@ pub fn list_manifests_meta(dir: &Path) -> Vec<ManifestMeta> {
                     .as_ref()
                     .map(|o| o.supported && o.cache_path.is_some())
                     .unwrap_or(false),
+                is_daemon: m.daemon.is_some(),
                 id: m.id,
                 display_name: m.display_name,
             })
