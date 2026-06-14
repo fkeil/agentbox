@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentbox</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <header id="topbar">
+    <span id="topbar-title">Agentbox</span>
+    <span id="topbar-status"></span>
+  </header>
+
+  <!-- ── Home: list managed boxes ───────────────────────────────── -->
+  <div id="view-home" class="view active">
+    <div class="toolbar">
+      <h2>Boxes</h2>
+      <div class="toolbar-actions">
+        <button id="btn-refresh" class="btn-ghost" title="Refresh">↻</button>
+        <button id="btn-new" class="btn-primary">+ New Box</button>
+      </div>
+    </div>
+    <div id="boxes-list">
+      <p class="hint">Loading…</p>
+    </div>
+  </div>
+
+  <!-- ── Wizard ─────────────────────────────────────────────────── -->
+  <div id="view-wizard" class="view">
+    <div class="toolbar">
+      <button id="btn-wizard-back" class="btn-ghost">← Back</button>
+      <h2 id="wizard-step-title">New Box</h2>
+    </div>
+    <div id="wizard-body"></div>
+    <div class="wizard-nav">
+      <button id="btn-wizard-prev" class="btn-ghost" style="display:none">← Previous</button>
+      <button id="btn-wizard-next" class="btn-primary">Next →</button>
+    </div>
+  </div>
+
+  <!-- ── Diff review ────────────────────────────────────────────── -->
+  <div id="view-diff" class="view">
+    <div class="toolbar">
+      <button id="btn-diff-back" class="btn-ghost">← Back</button>
+      <h2>Review Changes</h2>
+      <div class="toolbar-actions">
+        <button id="btn-diff-apply" class="btn-primary">Apply Approved</button>
+        <button id="btn-diff-discard" class="btn-danger">Discard All</button>
+      </div>
+    </div>
+    <div id="diff-body">
+      <div id="diff-file-list"></div>
+      <div id="diff-viewer">
+        <p class="hint">Select a file to view its diff.</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

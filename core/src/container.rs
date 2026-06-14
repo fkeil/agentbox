@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bollard::container::{
-    CreateContainerOptions, ListContainersOptions, RemoveContainerOptions, StartContainerOptions,
-    StopContainerOptions,
+    CreateContainerOptions, DownloadFromContainerOptions, ListContainersOptions,
+    RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
@@ -128,6 +128,21 @@ pub trait ContainerBackend: Send + Sync {
     ) -> Result<HashMap<String, String>, ContainerError>;
     /// List all agentbox-managed containers.
     async fn list_boxes(&self) -> Result<Vec<BoxInfo>, ContainerError>;
+
+    /// Upload a local directory into the container at `container_path`.
+    async fn copy_dir_to_container(
+        &self,
+        id: &ContainerId,
+        local_dir: &std::path::Path,
+        container_path: &str,
+    ) -> Result<(), ContainerError>;
+
+    /// Download a container directory as a raw tar archive.
+    async fn download_dir(
+        &self,
+        id: &ContainerId,
+        container_path: &str,
+    ) -> Result<Vec<u8>, ContainerError>;
 }
 
 // ── Docker implementation ─────────────────────────────────────────────────────
@@ -589,6 +604,62 @@ impl ContainerBackend for DockerBackend {
 
         boxes.sort_by(|a, b| a.box_name.cmp(&b.box_name));
         Ok(boxes)
+    }
+
+    async fn copy_dir_to_container(
+        &self,
+        id: &ContainerId,
+        local_dir: &std::path::Path,
+        container_path: &str,
+    ) -> Result<(), ContainerError> {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut ar = tar::Builder::new(&mut tar_bytes);
+            ar.append_dir_all(".", local_dir)
+                .map_err(|e| ContainerError::Tar(e.to_string()))?;
+            ar.finish().map_err(|e| ContainerError::Tar(e.to_string()))?;
+        }
+
+        self.exec_command(
+            id,
+            &["mkdir".into(), "-p".into(), container_path.to_string()],
+            &[],
+        )
+        .await?;
+
+        let upload_path = format!("{}/", container_path.trim_end_matches('/'));
+        self.client
+            .upload_to_container(
+                &id.0,
+                Some(bollard::container::UploadToContainerOptions {
+                    path: upload_path,
+                    no_overwrite_dir_non_dir: "".into(),
+                }),
+                tar_bytes.into(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn download_dir(
+        &self,
+        id: &ContainerId,
+        container_path: &str,
+    ) -> Result<Vec<u8>, ContainerError> {
+        let mut stream = self.client.download_from_container(
+            &id.0,
+            Some(DownloadFromContainerOptions {
+                path: container_path.to_string(),
+            }),
+        );
+
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            bytes.extend_from_slice(&chunk?);
+        }
+
+        Ok(bytes)
     }
 }
 

@@ -17,6 +17,17 @@ cargo clippy -- -D warnings          # lint
 cargo fmt --check                    # format check
 ```
 
+### GUI (Phase 4, standalone)
+`gui/src-tauri` is **not** a workspace member to avoid breaking CI on systems without
+webkit2gtk dev headers. To build it:
+```bash
+# Linux: sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev
+# macOS: no extra deps needed
+cd gui/src-tauri && cargo run
+# or with cargo-tauri installed:
+cargo install tauri-cli && cargo tauri dev
+```
+
 ## Workspace Structure
 
 ```
@@ -57,7 +68,7 @@ agentbox/
 `box.yaml` — user-facing config. See `agentbox-spec.md §7` for the full schema.
 Agent manifest YAML — see `agentbox-spec.md §8` for the full schema including daemon-specific fields.
 
-## Phased Roadmap (current target: Phase 4)
+## Phased Roadmap (current target: Phase 5)
 
 **Phase 1 ✅ (MVP):** CLI + core. Docker only. Two hardcoded agents (Claude Code and OpenCode). Provider types: all three including local. Auth: `${env:...}` and `auth: none`. Sync: `mount` only. Lifecycle: `ephemeral` only. Commands: `agentbox up --config box.yaml`, `agentbox down`.
 
@@ -65,7 +76,9 @@ Agent manifest YAML — see `agentbox-spec.md §8` for the full schema including
 
 **Phase 3 ✅ (TUI + persistent boxes):** Ratatui TUI (`agentbox-tui`): Home screen lists persistent boxes, Box detail (Attach/Stop/Remove), 5-step wizard (agent → folder → lifecycle → provider → summary). Persistent lifecycle: named containers, state volumes at `/root` keyed by box name. `agentbox list` command. `attach_box`, `stop_box`, `remove_box` engine calls.
 
-**Phase 4:** Tauri GUI. Snapshot sync (copy-in / git-backed diff / approve-writeback).
+**Phase 4 ✅ (GUI + snapshot sync):** `core/src/sync.rs` — snapshot engine: `copy_dir_to_container`, `download_dir` (tar), `compute_snapshot_diff` (text diff via `similar` crate), `apply_approved_changes`, `store_diff`/`load_diff` to `/tmp`. `sync: snapshot` in box.yaml copies folder into container at launch and diffs after exit instead of bind-mounting. Tauri 2 GUI in `gui/` (standalone project — requires `libwebkit2gtk-4.1-dev` to build): three-screen app — Home (box list), Config Wizard (5 steps), Diff Review (per-file approve/discard). Launch opens system terminal; GUI polls for diff file and shows review UI when the session ends.
+
+**Phase 5:** Egress allowlist. In-container OAuth device-code flow. Codex manifest. Hermes-Agent (daemon mode, port mapping, non-interactive setup, `nested_sandbox: local`).
 
 **Phase 5:** Egress allowlist. In-container OAuth device-code flow. Codex manifest. Hermes-Agent (daemon mode, port mapping, non-interactive setup, `nested_sandbox: local`).
 

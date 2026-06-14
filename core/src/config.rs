@@ -115,9 +115,6 @@ pub fn validate_config(cfg: &BoxConfig) -> Result<(), ConfigError> {
     if cfg.lifecycle == Lifecycle::Persistent && cfg.name.is_none() {
         errors.push("name is required when lifecycle is `persistent`".into());
     }
-    if cfg.folder.sync != SyncMode::Mount {
-        errors.push("folder.sync: only `mount` is supported in Phase 1".into());
-    }
     if cfg.network != NetworkMode::Open {
         errors.push("network: only `open` is supported in Phase 1".into());
     }
