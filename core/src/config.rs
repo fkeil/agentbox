@@ -8,6 +8,9 @@ pub struct BoxConfig {
     /// Box name — required when `lifecycle: persistent`, ignored for ephemeral.
     #[serde(default)]
     pub name: Option<String>,
+    /// Optional human-readable project name shown in window titles and box lists.
+    #[serde(default)]
+    pub project_name: Option<String>,
     pub folder: FolderConfig,
     #[serde(default)]
     pub lifecycle: Lifecycle,
@@ -115,9 +118,6 @@ pub fn validate_config(cfg: &BoxConfig) -> Result<(), ConfigError> {
     if cfg.lifecycle == Lifecycle::Persistent && cfg.name.is_none() {
         errors.push("name is required when lifecycle is `persistent`".into());
     }
-    if cfg.network != NetworkMode::Open {
-        errors.push("network: only `open` is supported in Phase 1".into());
-    }
     if !cfg.folder.path.exists() {
         errors.push(format!(
             "folder.path `{}` does not exist",
@@ -190,5 +190,49 @@ provider:
         assert_eq!(cfg.agent.0, "claude-code");
         assert_eq!(cfg.provider.provider_type, ProviderType::Anthropic);
         assert_eq!(cfg.lifecycle, Lifecycle::Ephemeral);
+    }
+
+    #[test]
+    fn allowlist_mode_passes_validation() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-5
+  auth: "none"
+network: allowlist
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.network, NetworkMode::Allowlist);
+        // validate_config only errors on missing folder/name — network mode is now unrestricted.
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn daemon_requires_persistent_lifecycle() {
+        // A box.yaml with lifecycle: ephemeral + a daemon agent should be caught at
+        // engine level, but validate_config itself is lifecycle-agnostic.  This test
+        // verifies that a persistent box without a name fails validation (the name
+        // requirement is the only lifecycle check in validate_config).
+        let yaml = r#"
+agent: hermes
+folder:
+  path: /tmp
+provider:
+  name: openai
+  type: openai
+  model: gpt-4o
+  auth: "none"
+lifecycle: persistent
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = validate_config(&cfg).unwrap_err();
+        let ConfigError::Validation(msgs) = err else {
+            panic!("expected Validation error");
+        };
+        assert!(msgs.iter().any(|m| m.contains("name is required")));
     }
 }

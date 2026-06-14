@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::agents::{AgentDef, AgentError};
 use crate::config::{ProviderConfig, ProviderType};
-use crate::manifest::AgentManifest;
+use crate::manifest::{AgentManifest, ConfigSource};
 
 pub struct ManifestAgentDef {
     manifest: AgentManifest,
@@ -17,6 +17,10 @@ impl ManifestAgentDef {
 impl AgentDef for ManifestAgentDef {
     fn id(&self) -> &str {
         &self.manifest.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.manifest.display_name
     }
 
     fn base_image(&self) -> &str {
@@ -58,6 +62,15 @@ impl AgentDef for ManifestAgentDef {
             return Ok(Vec::new());
         };
 
+        if config_def.source == ConfigSource::Raw {
+            // Write provider.raw directly as JSON; empty vec = skip writing.
+            return if provider.raw.is_null() {
+                Ok(Vec::new())
+            } else {
+                Ok(serde_json::to_vec_pretty(&provider.raw)?)
+            };
+        }
+
         let template = config_def
             .template_for(&provider.provider_type)
             .ok_or_else(|| {
@@ -70,7 +83,6 @@ impl AgentDef for ManifestAgentDef {
 
         let rendered = render_template(template, provider);
 
-        // Pretty-print if the rendered output is valid JSON.
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&rendered) {
             Ok(serde_json::to_vec_pretty(&v)?)
         } else {
@@ -103,6 +115,22 @@ impl AgentDef for ManifestAgentDef {
 
     fn extra_env(&self, _provider: &ProviderConfig) -> HashMap<String, String> {
         HashMap::new()
+    }
+
+    fn healthcheck_command(&self) -> Option<Vec<String>> {
+        self.manifest.healthcheck.clone()
+    }
+
+    fn oauth_cache_path(&self) -> Option<&str> {
+        self.manifest
+            .oauth
+            .as_ref()
+            .filter(|o| o.supported)
+            .and_then(|o| o.cache_path.as_deref())
+    }
+
+    fn daemon_config(&self) -> Option<&crate::manifest::DaemonConfig> {
+        self.manifest.daemon.as_ref()
     }
 }
 

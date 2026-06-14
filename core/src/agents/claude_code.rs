@@ -8,6 +8,9 @@ impl AgentDef for ClaudeCodeAgent {
     fn id(&self) -> &str {
         "claude-code"
     }
+    fn display_name(&self) -> &str {
+        "Claude Code"
+    }
 
     fn base_image(&self) -> &str {
         "node:22-slim"

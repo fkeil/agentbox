@@ -16,7 +16,65 @@ pub struct AgentManifest {
     pub auth: HashMap<ProviderType, AuthConfig>,
     pub config: Option<ConfigDef>,
     pub launch: LaunchConfig,
+    /// Command run after install to verify the agent is working. If it exits
+    /// non-zero, the run is aborted with a clear error.
+    #[serde(default)]
+    pub healthcheck: Option<Vec<String>>,
+    /// OAuth credential caching configuration.
+    #[serde(default)]
+    pub oauth: Option<OAuthConfig>,
+    /// Daemon-mode configuration. When present, this agent runs as a
+    /// long-lived background service instead of an interactive session.
+    #[serde(default)]
+    pub daemon: Option<DaemonConfig>,
     pub workdir: String,
+}
+
+/// Configuration for daemon-mode agents (e.g. Hermes).
+#[derive(Debug, Deserialize)]
+pub struct DaemonConfig {
+    /// Lifecycle this agent requires — always `persistent` for daemons.
+    pub requires_lifecycle: crate::config::Lifecycle,
+    /// Non-interactive setup step run once before the daemon is launched.
+    pub setup: Option<SetupConfig>,
+    /// Host↔container port mappings.
+    #[serde(default)]
+    pub ports: Vec<PortMapping>,
+    /// When `"local"`, inject `HERMES_SANDBOX=local` to disable the agent's
+    /// own nested sandbox (agentbox already provides isolation).
+    pub nested_sandbox: Option<String>,
+}
+
+/// Non-interactive setup method for daemon agents.
+#[derive(Debug, Deserialize)]
+pub struct SetupConfig {
+    /// `"config_file"` | `"env"` | `"exec"`
+    pub method: String,
+    /// Shell command to run (when `method: exec`).
+    pub command: Option<Vec<String>>,
+    /// Container path to write the rendered config (when `method: config_file`).
+    pub config_path: Option<String>,
+    /// Template for the config file (when `method: config_file`).
+    pub config_template: Option<String>,
+}
+
+/// A host↔container port mapping for daemon agents.
+#[derive(Debug, Deserialize)]
+pub struct PortMapping {
+    pub container_port: u16,
+    pub host_port: u16,
+    /// If true, the engine will not fail if the host port is already in use.
+    #[serde(default)]
+    pub optional: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OAuthConfig {
+    /// Whether this agent supports in-container OAuth device-code flow.
+    #[serde(default)]
+    pub supported: bool,
+    /// Container path where the OAuth token cache lives (mounted as a named volume).
+    pub cache_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,9 +120,20 @@ pub struct AuthConfig {
     pub base_url_env: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfigSource {
+    #[default]
+    Template,
+    /// Write `provider.raw` directly as JSON; skip if raw is null.
+    Raw,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ConfigDef {
     pub path: String,
+    #[serde(default)]
+    pub source: ConfigSource,
     /// Single template used for all provider types.
     pub template: Option<String>,
     /// Per-provider-type templates. Takes precedence over `template`.
@@ -125,20 +194,22 @@ pub fn validate_manifest(m: &AgentManifest) -> Vec<String> {
     }
 
     if let Some(config) = &m.config {
-        if config.template.is_none() && config.by_provider_type.is_empty() {
-            errors.push("config must have either 'template' or 'by_provider_type'".into());
-        }
-        if !config.by_provider_type.is_empty() {
-            for pt in &m.supported_providers {
-                if !config.by_provider_type.contains_key(pt) {
-                    let name = match pt {
-                        ProviderType::Anthropic => "anthropic",
-                        ProviderType::Openai => "openai",
-                        ProviderType::OpenaiCompatible => "openai-compatible",
-                    };
-                    errors.push(format!(
-                        "config.by_provider_type is missing template for '{name}'"
-                    ));
+        if config.source == ConfigSource::Template {
+            if config.template.is_none() && config.by_provider_type.is_empty() {
+                errors.push("config must have either 'template' or 'by_provider_type'".into());
+            }
+            if !config.by_provider_type.is_empty() {
+                for pt in &m.supported_providers {
+                    if !config.by_provider_type.contains_key(pt) {
+                        let name = match pt {
+                            ProviderType::Anthropic => "anthropic",
+                            ProviderType::Openai => "openai",
+                            ProviderType::OpenaiCompatible => "openai-compatible",
+                        };
+                        errors.push(format!(
+                            "config.by_provider_type is missing template for '{name}'"
+                        ));
+                    }
                 }
             }
         }
@@ -180,6 +251,40 @@ pub fn find_manifest(dir: &Path, agent_id: &str) -> Option<AgentManifest> {
             None
         }
     }
+}
+
+/// Rich summary of a manifest for UI listings.
+pub struct ManifestMeta {
+    pub id: String,
+    pub display_name: String,
+    pub oauth_supported: bool,
+}
+
+/// Return rich metadata for every parseable `*.yaml` file in `dir`.
+pub fn list_manifests_meta(dir: &Path) -> Vec<ManifestMeta> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    let mut out: Vec<ManifestMeta> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension()?.to_str()? != "yaml" {
+                return None;
+            }
+            load_manifest(&p).ok().map(|m| ManifestMeta {
+                oauth_supported: m
+                    .oauth
+                    .as_ref()
+                    .map(|o| o.supported && o.cache_path.is_some())
+                    .unwrap_or(false),
+                id: m.id,
+                display_name: m.display_name,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
 }
 
 /// Return `(id, display_name)` for every parseable `*.yaml` file in `dir`.
@@ -247,9 +352,9 @@ mod tests {
     }
 
     #[test]
-    fn pi_manifest_no_config_file() {
+    fn pi_manifest_config_file_path() {
         let agent = load_real("pi");
-        assert!(agent.config_file_path().is_none());
+        assert_eq!(agent.config_file_path(), Some("/root/.pi/agent/models.json"));
     }
 
     #[test]
@@ -272,7 +377,35 @@ mod tests {
         let agent = load_real("pi");
         let provider = openai_compat_provider("my-server", "llama3", "http://localhost:8080/v1");
         let args = agent.launch_args(&provider);
-        assert_eq!(args, vec!["--provider", "openai", "--model", "llama3"]);
+        assert_eq!(args, vec!["--provider", "my-server", "--model", "llama3"]);
+    }
+
+    #[test]
+    fn codex_manifest_basics() {
+        let agent = load_real("codex");
+        assert_eq!(agent.id(), "codex");
+        assert_eq!(
+            agent.healthcheck_command().unwrap_or_default(),
+            vec!["codex", "--version"]
+        );
+        assert_eq!(agent.oauth_cache_path(), Some("/root/.codex"));
+        let provider = ProviderConfig {
+            name: "openai".into(),
+            provider_type: ProviderType::Openai,
+            model: "gpt-4o".into(),
+            base_url: None,
+            auth: "none".into(),
+            raw: serde_json::Value::Null,
+        };
+        let args = agent.launch_args(&provider);
+        assert_eq!(args, vec!["--model", "gpt-4o"]);
+    }
+
+    #[test]
+    fn claude_code_oauth_cache_path() {
+        let agent = load_real("claude-code");
+        assert_eq!(agent.oauth_cache_path(), Some("/root/.claude"));
+        assert!(agent.healthcheck_command().is_some());
     }
 
     #[test]
@@ -294,6 +427,64 @@ mod tests {
         assert!(found.is_some());
         // The returned agent should be the manifest variant (same id regardless).
         assert_eq!(found.unwrap().id(), "claude-code");
+    }
+
+    #[test]
+    fn daemon_config_parses() {
+        let yaml = r#"
+id: test-daemon
+display_name: Test Daemon
+base_image: ubuntu:22.04
+install:
+  method: npm
+  packages: ["test-daemon"]
+supported_providers:
+  - openai
+auth: {}
+launch:
+  command: ["test-daemon", "start"]
+  args: []
+workdir: /workspace
+daemon:
+  requires_lifecycle: persistent
+  nested_sandbox: local
+  setup:
+    method: exec
+    command: ["test-daemon", "setup", "--non-interactive"]
+  ports:
+    - container_port: 9090
+      host_port: 9090
+      optional: false
+"#;
+        let manifest: AgentManifest = serde_yaml::from_str(yaml).unwrap();
+        let daemon = manifest.daemon.unwrap();
+        assert_eq!(daemon.nested_sandbox.as_deref(), Some("local"));
+        let setup = daemon.setup.unwrap();
+        assert_eq!(setup.method, "exec");
+        assert_eq!(
+            setup.command.unwrap(),
+            vec!["test-daemon", "setup", "--non-interactive"]
+        );
+    }
+
+    #[test]
+    fn port_mapping_parses() {
+        let yaml = r#"
+container_port: 8080
+host_port: 9090
+optional: true
+"#;
+        let pm: PortMapping = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(pm.container_port, 8080);
+        assert_eq!(pm.host_port, 9090);
+        assert!(pm.optional);
+    }
+
+    #[test]
+    fn port_mapping_optional_defaults_false() {
+        let yaml = "container_port: 3000\nhost_port: 3000\n";
+        let pm: PortMapping = serde_yaml::from_str(yaml).unwrap();
+        assert!(!pm.optional);
     }
 }
 

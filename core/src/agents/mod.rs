@@ -19,6 +19,10 @@ pub enum AgentError {
 /// YAML-defined agents loaded at runtime.
 pub trait AgentDef: Send + Sync {
     fn id(&self) -> &str;
+    /// Human-readable name shown in UI (e.g. "Claude Code", "OpenCode", "Pi").
+    fn display_name(&self) -> &str {
+        self.id()
+    }
     fn base_image(&self) -> &str;
     /// Shell args passed to `exec` for installing the agent (runs as root).
     fn install_command(&self) -> Vec<String>;
@@ -44,6 +48,13 @@ pub trait AgentDef: Send + Sync {
     fn workdir(&self) -> &str;
     /// Extra env vars the agent always needs beyond auth injection.
     fn extra_env(&self, provider: &ProviderConfig) -> HashMap<String, String>;
+    /// Command to verify the agent installed correctly. None = skip.
+    fn healthcheck_command(&self) -> Option<Vec<String>> { None }
+    /// Container path for the OAuth token cache (mounted as a named volume).
+    /// None means this agent does not support in-container OAuth.
+    fn oauth_cache_path(&self) -> Option<&str> { None }
+    /// Daemon configuration, or None for session-mode agents.
+    fn daemon_config(&self) -> Option<&crate::manifest::DaemonConfig> { None }
 }
 
 /// Resolve an agent by ID. Searches `manifests_dir` first (if provided),

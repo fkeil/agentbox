@@ -24,14 +24,20 @@ auth:
     api_key_env: OPENAI_API_KEY
     base_url_env: OPENAI_BASE_URL
 
-# Pi is entirely CLI-driven — no config file needed.
-config: ~
+# provider.raw is written verbatim to ~/.pi/agent/models.json when non-null.
+# Use this to register custom providers (Ollama, vLLM, LM Studio, proxies)
+# with multiple models each. Omit raw (or leave null) for built-in providers.
+config:
+  path: /root/.pi/agent/models.json
+  source: raw
 
 launch:
   command: [pi]
   args_by_provider_type:
     anthropic: ["--model", "anthropic/{{model}}"]
     openai: ["--model", "openai/{{model}}"]
-    openai-compatible: ["--provider", "openai", "--model", "{{model}}"]
+    openai-compatible: ["--provider", "{{provider_name}}", "--model", "{{model}}"]
+
+healthcheck: ["pi", "--version"]
 
 workdir: /workspace

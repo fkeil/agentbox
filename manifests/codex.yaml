@@ -1,0 +1,36 @@
+id: codex
+display_name: Codex
+base_image: node:22-slim
+
+install:
+  method: npm
+  packages:
+    - "@openai/codex"
+
+supported_providers:
+  - openai
+  - openai-compatible
+
+auth:
+  openai:
+    api_key_env: OPENAI_API_KEY
+  openai-compatible:
+    api_key_env: OPENAI_API_KEY
+    base_url_env: OPENAI_BASE_URL
+
+# Codex reads OPENAI_API_KEY + OPENAI_BASE_URL from the environment;
+# no separate config file is needed.
+
+launch:
+  command: [codex]
+  args_by_provider_type:
+    openai: ["--model", "{{model}}"]
+    openai-compatible: ["--model", "{{model}}"]
+
+healthcheck: ["codex", "--version"]
+
+oauth:
+  supported: true
+  cache_path: /root/.codex
+
+workdir: /workspace

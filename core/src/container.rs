@@ -4,8 +4,8 @@ use bollard::container::{
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
-use bollard::image::CreateImageOptions;
-use bollard::models::{HostConfig, Mount, MountTypeEnum};
+use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
+use bollard::models::{HostConfig, Mount, MountTypeEnum, PortBinding};
 use bollard::volume::{CreateVolumeOptions, RemoveVolumeOptions};
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -41,6 +41,10 @@ pub struct ContainerSpec {
     pub workdir: String,
     /// Docker labels to attach to the container.
     pub labels: HashMap<String, String>,
+    /// Linux capabilities to add (e.g. `["NET_ADMIN"]` for egress allowlist).
+    pub cap_add: Vec<String>,
+    /// Host port binding pairs (container_port, host_port) for daemon agents.
+    pub port_bindings: Vec<(u16, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +62,19 @@ pub struct BoxInfo {
     pub status: ContainerStatus,
     /// Host folder bind-mounted into the container, if readable from labels.
     pub folder: Option<String>,
+    /// User-supplied project name (shown in window titles / box lists).
+    pub project_name: Option<String>,
+    /// "persistent" or "ephemeral". Ephemeral boxes in the list are orphaned leftovers.
+    pub lifecycle: String,
+}
+
+/// A cached agent install image (`agentbox-cache-{agent_id}:latest`).
+#[derive(Debug, Clone)]
+pub struct CacheImage {
+    pub agent_id: String,
+    pub image_name: String,
+    pub size_mb: f64,
+    pub created_unix: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,8 +143,14 @@ pub trait ContainerBackend: Send + Sync {
         &self,
         id: &ContainerId,
     ) -> Result<HashMap<String, String>, ContainerError>;
-    /// List all agentbox-managed containers.
+    /// List all agentbox-managed containers (persistent + labeled ephemeral orphans).
     async fn list_boxes(&self) -> Result<Vec<BoxInfo>, ContainerError>;
+
+    /// List cached agent install images (`agentbox-cache-*`).
+    async fn list_cache_images(&self) -> Result<Vec<CacheImage>, ContainerError>;
+
+    /// Remove a Docker image by its full name (e.g. `agentbox-cache-claude-code:latest`).
+    async fn remove_image(&self, image: &str) -> Result<(), ContainerError>;
 
     /// Upload a local directory into the container at `container_path`.
     async fn copy_dir_to_container(
@@ -213,6 +236,25 @@ impl ContainerBackend for DockerBackend {
 
         let all_mounts: Vec<Mount> = bind_mounts.into_iter().chain(volume_mounts).collect();
 
+        let port_bindings: Option<HashMap<String, Option<Vec<PortBinding>>>> =
+            if spec.port_bindings.is_empty() {
+                None
+            } else {
+                Some(
+                    spec.port_bindings
+                        .iter()
+                        .map(|(cp, hp)| {
+                            let key = format!("{cp}/tcp");
+                            let binding = PortBinding {
+                                host_ip: Some("0.0.0.0".to_string()),
+                                host_port: Some(hp.to_string()),
+                            };
+                            (key, Some(vec![binding]))
+                        })
+                        .collect(),
+                )
+            };
+
         let host_config = HostConfig {
             mounts: Some(all_mounts),
             network_mode: Some(spec.network_mode.clone()),
@@ -223,6 +265,12 @@ impl ContainerBackend for DockerBackend {
             },
             nano_cpus: spec.cpu_limit.map(|c| (c * 1_000_000_000.0) as i64),
             memory: spec.memory_limit.map(|m| m as i64),
+            cap_add: if spec.cap_add.is_empty() {
+                None
+            } else {
+                Some(spec.cap_add.clone())
+            },
+            port_bindings,
             ..Default::default()
         };
 
@@ -583,6 +631,7 @@ impl ContainerBackend for DockerBackend {
                     .cloned()
                     .unwrap_or_else(|| agent_id.clone());
                 let folder = labels.get("agentbox.folder").cloned();
+                let project_name = labels.get("agentbox.project-name").cloned();
                 let status = c.state.as_deref().map(|s| {
                     if s == "running" {
                         ContainerStatus::Running
@@ -591,6 +640,11 @@ impl ContainerBackend for DockerBackend {
                     }
                 }).unwrap_or(ContainerStatus::Stopped);
 
+                let lifecycle = labels
+                    .get("agentbox.lifecycle")
+                    .cloned()
+                    .unwrap_or_else(|| "persistent".to_string());
+
                 Some(BoxInfo {
                     box_name,
                     agent_id,
@@ -598,12 +652,62 @@ impl ContainerBackend for DockerBackend {
                     container_id: c.id.unwrap_or_default(),
                     status,
                     folder,
+                    project_name,
+                    lifecycle,
                 })
             })
             .collect();
 
         boxes.sort_by(|a, b| a.box_name.cmp(&b.box_name));
         Ok(boxes)
+    }
+
+    async fn list_cache_images(&self) -> Result<Vec<CacheImage>, ContainerError> {
+        let images = self
+            .client
+            .list_images(Some(ListImagesOptions::<String> {
+                all: false,
+                filters: HashMap::new(),
+                digests: false,
+            }))
+            .await?;
+
+        let mut result: Vec<CacheImage> = images
+            .into_iter()
+            .filter_map(|img| {
+                let repo_tag = img
+                    .repo_tags
+                    .into_iter()
+                    .find(|t| t.starts_with("agentbox-cache-"))?;
+                let agent_id = repo_tag
+                    .strip_prefix("agentbox-cache-")?
+                    .trim_end_matches(":latest")
+                    .to_string();
+                Some(CacheImage {
+                    agent_id,
+                    image_name: repo_tag,
+                    size_mb: (img.size as f64) / (1024.0 * 1024.0),
+                    created_unix: img.created,
+                })
+            })
+            .collect();
+
+        result.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+        Ok(result)
+    }
+
+    async fn remove_image(&self, image: &str) -> Result<(), ContainerError> {
+        self.client
+            .remove_image(
+                image,
+                Some(RemoveImageOptions {
+                    force: true,
+                    noprune: false,
+                }),
+                None,
+            )
+            .await?;
+        Ok(())
     }
 
     async fn copy_dir_to_container(
@@ -660,6 +764,47 @@ impl ContainerBackend for DockerBackend {
         }
 
         Ok(bytes)
+    }
+}
+
+impl DockerBackend {
+    /// Launch a command inside the container in the background (detached exec).
+    /// Returns immediately; the command keeps running until the container stops.
+    pub async fn exec_background(
+        &self,
+        id: &ContainerId,
+        cmd: &[String],
+        workdir: &str,
+    ) -> Result<(), ContainerError> {
+        let cmd_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
+
+        let exec_id = self
+            .client
+            .create_exec(
+                &id.0,
+                CreateExecOptions {
+                    cmd: Some(cmd_refs),
+                    attach_stdin: Some(false),
+                    attach_stdout: Some(false),
+                    attach_stderr: Some(false),
+                    working_dir: Some(workdir),
+                    ..Default::default()
+                },
+            )
+            .await?
+            .id;
+
+        self.client
+            .start_exec(
+                &exec_id,
+                Some(StartExecOptions {
+                    detach: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        Ok(())
     }
 }
 

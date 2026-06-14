@@ -9,6 +9,9 @@ impl AgentDef for OpenCodeAgent {
     fn id(&self) -> &str {
         "opencode"
     }
+    fn display_name(&self) -> &str {
+        "OpenCode"
+    }
 
     fn base_image(&self) -> &str {
         "node:22-slim"

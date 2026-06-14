@@ -10,7 +10,10 @@
   <!-- ── Top bar ─────────────────────────────────────────────────── -->
   <header id="topbar">
     <span id="topbar-title">Agentbox</span>
-    <span id="topbar-status"></span>
+    <span id="topbar-center"><span id="topbar-status"></span></span>
+    <div id="topbar-actions">
+      <button id="btn-theme" title="Toggle dark/light mode">☀</button>
+    </div>
   </header>
 
   <!-- ── Home: list managed boxes ───────────────────────────────── -->
@@ -24,6 +27,18 @@
     </div>
     <div id="boxes-list">
       <p class="hint">Loading…</p>
+    </div>
+
+    <div class="section-divider">
+      <div class="toolbar" style="margin-top:24px">
+        <h2>Cache Images</h2>
+        <div class="toolbar-actions">
+          <button id="btn-refresh-images" class="btn-ghost" title="Refresh images">↻</button>
+        </div>
+      </div>
+      <div id="images-list">
+        <p class="hint">Loading…</p>
+      </div>
     </div>
   </div>
 

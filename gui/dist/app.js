@@ -1,6 +1,18 @@
 // Tauri IPC bridge
 const { invoke } = window.__TAURI__.core;
 
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('btn-theme').textContent = theme === 'light' ? '☾' : '☀';
+  localStorage.setItem('agentbox-theme', theme);
+}
+
+(function initTheme() {
+  applyTheme(localStorage.getItem('agentbox-theme') || 'dark');
+})();
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -9,9 +21,11 @@ const state = {
   agents: [],
   selectedAgent: null,
   folder: '',
+  projectName: '',
   lifecycle: 'ephemeral',
   boxName: '',
   sync: 'mount',
+  piModelsJson: '',
   provider: {
     name: 'anthropic',
     type: 'anthropic',
@@ -42,49 +56,121 @@ async function loadBoxes() {
   try {
     const boxes = await invoke('get_boxes');
     if (boxes.length === 0) {
-      list.innerHTML = '<p class="hint">No persistent boxes yet. Create one with "+ New Box".</p>';
+      list.innerHTML = '<p class="hint">No boxes yet. Create one with "+ New Box".</p>';
+    } else {
+      list.innerHTML = '';
+      for (const b of boxes) {
+        list.appendChild(makeBoxCard(b));
+      }
+    }
+  } catch (e) {
+    list.innerHTML = `<p class="hint" style="color:var(--red)">${e}</p>`;
+  }
+  loadImages();
+}
+
+function makeBoxCard(b) {
+  const isEphemeral = b.lifecycle === 'ephemeral';
+  const card = document.createElement('div');
+  card.className = 'box-card' + (isEphemeral ? ' box-card-orphaned' : '');
+
+  const dot = document.createElement('div');
+  if (isEphemeral) {
+    dot.className = 'box-status-dot orphaned';
+    dot.title = 'Orphaned ephemeral container';
+  } else {
+    dot.className = `box-status-dot ${b.status}`;
+  }
+
+  const info = document.createElement('div');
+  info.className = 'box-card-info';
+  const agentLabel = b.project_name
+    ? `${esc(b.agent_display_name)} - ${esc(b.project_name)}`
+    : esc(b.agent_display_name);
+  const lifecycleBadge = isEphemeral
+    ? `<span class="lifecycle-badge ephemeral-badge">⚠ orphaned</span>`
+    : `<span class="lifecycle-badge">${esc(b.lifecycle)}</span>`;
+  info.innerHTML = `
+    <div class="box-card-name">${esc(b.box_name)} ${lifecycleBadge}</div>
+    <div class="box-card-meta">${agentLabel} · ${b.folder ? esc(b.folder) : 'no folder'}</div>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'box-card-actions';
+
+  if (isEphemeral) {
+    // Orphaned ephemeral container: only Kill action
+    actions.appendChild(btn('Kill', 'btn-danger', async () => {
+      if (!confirm(`Force-remove container "${b.box_name}"?\n\nThis removes the container only. No state volume is affected.`)) return;
+      try { await invoke('kill_box', { boxName: b.box_name }); loadBoxes(); }
+      catch (e) { alert(e); }
+    }));
+  } else {
+    // Persistent box: Stop / Attach / Remove
+    const btnStop = btn('Stop', 'btn-ghost', async () => {
+      try { await invoke('stop_box', { boxName: b.box_name }); loadBoxes(); }
+      catch (e) { alert(e); }
+    });
+    const btnAttach = btn('Attach', 'btn-primary', async () => {
+      const attachTitle = b.project_name
+        ? `${b.agent_display_name} - ${b.project_name}`
+        : b.agent_display_name;
+      try { await invoke('attach_box_terminal', { boxName: b.box_name, title: attachTitle }); }
+      catch (e) { alert(e); }
+    });
+    const btnRemove = btn('Remove', 'btn-danger', async () => {
+      if (!confirm(`Remove box "${b.box_name}" and its state volume?`)) return;
+      try { await invoke('remove_box', { boxName: b.box_name }); loadBoxes(); }
+      catch (e) { alert(e); }
+    });
+
+    if (b.status === 'running') actions.appendChild(btnStop);
+    if (b.status === 'stopped') actions.appendChild(btnAttach);
+    actions.appendChild(btnRemove);
+  }
+
+  card.append(dot, info, actions);
+  return card;
+}
+
+async function loadImages() {
+  const list = document.getElementById('images-list');
+  list.innerHTML = '<p class="hint">Loading…</p>';
+  try {
+    const images = await invoke('list_cache_images');
+    if (images.length === 0) {
+      list.innerHTML = '<p class="hint">No cache images. They are created on first agent launch.</p>';
       return;
     }
     list.innerHTML = '';
-    for (const b of boxes) {
-      list.appendChild(makeBoxCard(b));
+    for (const img of images) {
+      list.appendChild(makeImageCard(img));
     }
   } catch (e) {
     list.innerHTML = `<p class="hint" style="color:var(--red)">${e}</p>`;
   }
 }
 
-function makeBoxCard(b) {
+function makeImageCard(img) {
   const card = document.createElement('div');
-  card.className = 'box-card';
-
-  const dot = document.createElement('div');
-  dot.className = `box-status-dot ${b.status}`;
+  card.className = 'image-card';
 
   const info = document.createElement('div');
-  info.className = 'box-card-info';
+  info.className = 'image-card-info';
   info.innerHTML = `
-    <div class="box-card-name">${esc(b.box_name)}</div>
-    <div class="box-card-meta">${esc(b.agent_display_name)} · ${b.folder ? esc(b.folder) : 'no folder'}</div>
+    <div class="image-card-name">${esc(img.agent_id)}</div>
+    <div class="image-card-meta">${esc(img.image_name)} · ${img.size_mb.toFixed(1)} MB</div>
   `;
 
   const actions = document.createElement('div');
-  actions.className = 'box-card-actions';
-
-  const btnStop = btn('Stop', 'btn-ghost', async () => {
-    try { await invoke('stop_box', { boxName: b.box_name }); loadBoxes(); }
+  actions.className = 'image-card-actions';
+  actions.appendChild(btn('Delete', 'btn-danger btn-sm', async () => {
+    if (!confirm(`Delete cache image for "${img.agent_id}"?\n\nThe agent will be reinstalled on next launch.`)) return;
+    try { await invoke('remove_cache_image', { agentId: img.agent_id }); loadImages(); }
     catch (e) { alert(e); }
-  });
-  const btnRemove = btn('Remove', 'btn-danger', async () => {
-    if (!confirm(`Remove box "${b.box_name}"?`)) return;
-    try { await invoke('remove_box', { boxName: b.box_name }); loadBoxes(); }
-    catch (e) { alert(e); }
-  });
+  }));
 
-  if (b.status === 'running') actions.appendChild(btnStop);
-  actions.appendChild(btnRemove);
-
-  card.append(dot, info, actions);
+  card.append(info, actions);
   return card;
 }
 
@@ -96,9 +182,11 @@ async function startWizard() {
   state.step = 0;
   state.selectedAgent = null;
   state.folder = '';
+  state.projectName = '';
   state.lifecycle = 'ephemeral';
   state.boxName = '';
   state.sync = 'mount';
+  state.piModelsJson = '';
   state.provider = { name: 'anthropic', type: 'anthropic', model: 'claude-sonnet-4-6', base_url: '', auth: 'none' };
 
   try {
@@ -143,11 +231,28 @@ function renderWizardStep() {
       <div class="form-group">
         <label>Host folder to mount</label>
         <input id="wiz-folder" type="text" placeholder="/home/you/myproject" value="${esc(state.folder)}" />
+      </div>
+      <div class="form-group">
+        <label>Project name <span style="color:var(--text-dim);font-weight:normal">(optional — shown in window title and box list)</span></label>
+        <input id="wiz-project-name" type="text" placeholder="MyProject" value="${esc(state.projectName)}" />
       </div>`;
-    document.getElementById('wiz-folder').oninput = e => { state.folder = e.target.value; };
+    document.getElementById('wiz-folder').oninput = e => {
+      state.folder = e.target.value;
+      // Auto-fill project name from basename if not yet customised
+      if (!state.projectName) {
+        const basename = e.target.value.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+        if (basename) document.getElementById('wiz-project-name').placeholder = basename;
+      }
+    };
+    document.getElementById('wiz-project-name').oninput = e => { state.projectName = e.target.value; };
 
   } else if (step === 'lifecycle') {
     title.textContent = 'Lifecycle & Sync';
+    // Auto-suggest box name from agent + folder basename
+    if (!state.boxName && state.selectedAgent && state.folder) {
+      const basename = state.folder.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+      if (basename) state.boxName = `${state.selectedAgent}-${basename}`;
+    }
     body.innerHTML = `
       <div class="form-group">
         <label>Lifecycle</label>
@@ -205,6 +310,12 @@ function renderWizardStep() {
   } else if (step === 'provider') {
     title.textContent = 'Provider';
     const isCompat = state.provider.type === 'openai-compatible';
+    const isPi = state.selectedAgent === 'pi';
+    const agentMeta = state.agents.find(a => a.id === state.selectedAgent) || {};
+    const agentOauth = !!agentMeta.oauth_supported;
+    // Detect if auth is currently set to oauth mode
+    const isOauth = state.provider.auth === 'oauth';
+
     body.innerHTML = `
       <div class="form-group">
         <label>Provider type</label>
@@ -215,7 +326,7 @@ function renderWizardStep() {
         </select>
       </div>
       <div class="form-group">
-        <label>Provider name</label>
+        <label>Provider name${isPi ? ' <span style="font-weight:400;text-transform:none;letter-spacing:0">(must match key in models.json, e.g. "ollama")</span>' : ''}</label>
         <input id="wiz-pname" type="text" value="${esc(state.provider.name)}" />
       </div>
       <div class="form-group">
@@ -226,10 +337,53 @@ function renderWizardStep() {
         <label>Base URL</label>
         <input id="wiz-pbaseurl" type="text" placeholder="http://localhost:11434/v1" value="${esc(state.provider.base_url)}" />
       </div>
+
+      ${agentOauth ? `
+      <div class="form-group">
+        <label>Auth method</label>
+        <div class="radio-group">
+          <label class="radio-opt ${!isOauth ? 'selected' : ''}" id="opt-auth-key">
+            <input type="radio" name="auth-method" value="key" ${!isOauth ? 'checked' : ''} />
+            <span class="opt-label">API Key</span>
+            <span class="opt-desc">Inject a key from env / keychain / file</span>
+          </label>
+          <label class="radio-opt ${isOauth ? 'selected' : ''}" id="opt-auth-oauth">
+            <input type="radio" name="auth-method" value="oauth" ${isOauth ? 'checked' : ''} />
+            <span class="opt-label">OAuth / Subscription</span>
+            <span class="opt-desc">Log in via browser — no API key needed</span>
+          </label>
+        </div>
+      </div>
+      <div id="auth-key-group" style="${isOauth ? 'display:none' : ''}">
+        <div class="form-group">
+          <label>Auth (secret reference)</label>
+          <input id="wiz-pauth" type="text" placeholder="\${env:ANTHROPIC_API_KEY} or none" value="${esc(isOauth ? '' : state.provider.auth)}" />
+        </div>
+      </div>
+      <div id="auth-oauth-info" style="${isOauth ? '' : 'display:none'}; background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; margin-top:4px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px;">How OAuth works in Agentbox</div>
+        <ol style="font-size:12px;color:var(--text-dim);margin:0;padding-left:18px;line-height:1.8">
+          <li>Click <strong>Launch →</strong> — a terminal window opens.</li>
+          <li>The agent prints a URL like:<br><code style="font-size:11px;background:var(--bg2);padding:2px 6px;border-radius:3px">https://claude.ai/oauth/authorize?...</code></li>
+          <li>Open that URL in your browser and log in with your account.</li>
+          <li>The agent detects the completed login and starts.</li>
+          <li>Your credentials are cached in a Docker volume — <strong>future runs skip the login</strong>.</li>
+        </ol>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:10px;">
+          Cache volume: <code>agentbox-oauth-${esc(state.selectedAgent || '')}</code>
+        </div>
+      </div>` : `
       <div class="form-group">
         <label>Auth (secret reference)</label>
         <input id="wiz-pauth" type="text" placeholder="\${env:ANTHROPIC_API_KEY} or none" value="${esc(state.provider.auth)}" />
-      </div>`;
+      </div>`}
+
+      ${isPi ? `
+      <div class="form-group" id="pi-models-group">
+        <label>Pi custom models.json <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — Ollama, vLLM, LM Studio, proxies)</span></label>
+        <textarea id="wiz-pi-models" rows="8" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'SF Mono',Consolas,monospace;font-size:12px;padding:8px 10px;outline:none;resize:vertical" placeholder='{\n  "providers": {\n    "ollama": {\n      "baseUrl": "http://localhost:11434/v1",\n      "api": "openai-completions",\n      "apiKey": "ollama",\n      "models": [\n        { "id": "llama3.1:8b" },\n        { "id": "qwen2.5-coder:7b" }\n      ]\n    }\n  }\n}'>${esc(state.piModelsJson)}</textarea>
+        <div id="pi-models-err" style="color:var(--red);font-size:12px;margin-top:4px;display:none"></div>
+      </div>` : ''}`;
 
     body.querySelector('#wiz-ptype').onchange = e => {
       state.provider.type = e.target.value;
@@ -237,8 +391,26 @@ function renderWizardStep() {
     };
     body.querySelector('#wiz-pname').oninput = e => { state.provider.name = e.target.value; };
     body.querySelector('#wiz-pmodel').oninput = e => { state.provider.model = e.target.value; };
-    body.querySelector('#wiz-pbaseurl').oninput = e => { state.provider.base_url = e.target.value; };
-    body.querySelector('#wiz-pauth').oninput = e => { state.provider.auth = e.target.value; };
+    body.querySelector('#wiz-pbaseurl') && (body.querySelector('#wiz-pbaseurl').oninput = e => { state.provider.base_url = e.target.value; });
+    if (agentOauth) {
+      body.querySelectorAll('input[name=auth-method]').forEach(r => {
+        r.onchange = () => {
+          const useOauth = r.value === 'oauth';
+          state.provider.auth = useOauth ? 'oauth' : '';
+          document.getElementById('opt-auth-key').classList.toggle('selected', !useOauth);
+          document.getElementById('opt-auth-oauth').classList.toggle('selected', useOauth);
+          document.getElementById('auth-key-group').style.display = useOauth ? 'none' : '';
+          document.getElementById('auth-oauth-info').style.display = useOauth ? '' : 'none';
+        };
+      });
+      const authInput = body.querySelector('#wiz-pauth');
+      if (authInput) authInput.oninput = e => { state.provider.auth = e.target.value; };
+    } else {
+      body.querySelector('#wiz-pauth').oninput = e => { state.provider.auth = e.target.value; };
+    }
+    if (isPi) {
+      body.querySelector('#wiz-pi-models').oninput = e => { state.piModelsJson = e.target.value; };
+    }
 
   } else if (step === 'summary') {
     title.textContent = 'Summary';
@@ -246,13 +418,14 @@ function renderWizardStep() {
       <table class="summary-table">
         <tr><td>Agent</td><td>${esc(state.selectedAgent || '—')}</td></tr>
         <tr><td>Folder</td><td>${esc(state.folder)}</td></tr>
+        ${state.projectName ? `<tr><td>Project name</td><td>${esc(state.projectName)}</td></tr>` : ''}
         <tr><td>Lifecycle</td><td>${esc(state.lifecycle)}</td></tr>
         ${state.lifecycle === 'persistent' ? `<tr><td>Box name</td><td>${esc(state.boxName)}</td></tr>` : ''}
         <tr><td>Sync</td><td>${esc(state.sync)}</td></tr>
         <tr><td>Provider type</td><td>${esc(state.provider.type)}</td></tr>
         <tr><td>Model</td><td>${esc(state.provider.model)}</td></tr>
         ${state.provider.base_url ? `<tr><td>Base URL</td><td>${esc(state.provider.base_url)}</td></tr>` : ''}
-        <tr><td>Auth</td><td>${esc(state.provider.auth)}</td></tr>
+        <tr><td>Auth</td><td>${state.provider.auth === 'oauth' ? 'OAuth / Subscription' : esc(state.provider.auth)}</td></tr>
       </table>
       <p style="margin-top:20px;color:var(--text-dim);font-size:12px;">
         Clicking "Launch" will open a terminal window running the agent.
@@ -270,6 +443,10 @@ async function wizardNext() {
   }
   if (step === 'folder' && !state.folder.trim()) {
     alert('Please enter a folder path.'); return;
+  }
+  if (step === 'provider' && state.selectedAgent === 'pi' && state.piModelsJson.trim()) {
+    try { JSON.parse(state.piModelsJson); }
+    catch (e) { alert('Pi models.json is not valid JSON:\n' + e.message + '\n\nThis field expects the Pi models.json format (JSON), not box.yaml YAML.'); return; }
   }
   if (step === 'lifecycle' && state.lifecycle === 'persistent' && !state.boxName.trim()) {
     alert('Please enter a box name for persistent lifecycle.'); return;
@@ -290,6 +467,7 @@ async function launchBox() {
   const config = {
     agent: state.selectedAgent,
     name: state.lifecycle === 'persistent' ? state.boxName : null,
+    project_name: state.projectName.trim() || null,
     folder: state.folder.trim(),
     lifecycle: state.lifecycle,
     sync: state.sync,
@@ -300,13 +478,19 @@ async function launchBox() {
       base_url: state.provider.base_url || null,
       auth: state.provider.auth,
     },
+    pi_models_json: (state.selectedAgent === 'pi' && state.piModelsJson.trim())
+      ? state.piModelsJson : null,
   };
 
   setStatus('Preparing launch…');
   try {
     const info = await invoke('prepare_launch', { config });
     state.launchInfo = info;
-    await invoke('open_in_terminal', { configPath: info.config_path });
+    const agentLabel = (state.agents.find(a => a.id === state.selectedAgent) || {}).display_name || state.selectedAgent || '';
+    const windowTitle = state.projectName.trim()
+      ? `${agentLabel} - ${state.projectName.trim()}`
+      : agentLabel;
+    await invoke('open_in_terminal', { configPath: info.config_path, title: windowTitle || null });
     setStatus('Terminal opened. Waiting for session…');
     showView('view-home');
     loadBoxes();
@@ -452,8 +636,13 @@ function setStatus(msg) {
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
+document.getElementById('btn-theme').onclick = () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'light' ? 'dark' : 'light');
+};
 document.getElementById('btn-new').onclick = startWizard;
 document.getElementById('btn-refresh').onclick = loadBoxes;
+document.getElementById('btn-refresh-images').onclick = loadImages;
 document.getElementById('btn-wizard-back').onclick = () => { showView('view-home'); loadBoxes(); };
 document.getElementById('btn-wizard-next').onclick = wizardNext;
 document.getElementById('btn-wizard-prev').onclick = wizardPrev;
