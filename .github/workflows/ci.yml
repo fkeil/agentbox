@@ -29,7 +29,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build workspace (CLI + TUI + core)
-        run: cargo build --workspace
+        run: cargo build --locked --workspace
 
       - name: Run tests
         run: cargo test --workspace
@@ -67,7 +67,7 @@ jobs:
 
       - name: Build GUI
         working-directory: gui/src-tauri
-        run: cargo build
+        run: cargo build --locked
 
   build-gui-macos:
     name: Build GUI (macOS)
@@ -85,4 +85,4 @@ jobs:
 
       - name: Build GUI
         working-directory: gui/src-tauri
-        run: cargo build
+        run: cargo build --locked
