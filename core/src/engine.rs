@@ -729,10 +729,30 @@ async fn run_daemon(
         .map(|p| (p.container_port, p.host_port))
         .collect();
 
-    // Inject nested_sandbox env var if specified (e.g. HERMES_SANDBOX=local).
+    // nested_sandbox env var is now injected via manifest.env (agent-specific).
+    // Keep as alias for backward-compat with hermes.yaml stub.
     let mut final_env_vars = env_vars;
     if let Some(sandbox_mode) = &daemon_cfg.nested_sandbox {
-        final_env_vars.push(format!("HERMES_SANDBOX={sandbox_mode}"));
+        // Only inject if manifest.env doesn't already set a sandbox var.
+        let already_set = final_env_vars.iter().any(|v| v.contains("SANDBOX"));
+        if !already_set {
+            final_env_vars.push(format!("HERMES_SANDBOX={sandbox_mode}"));
+        }
+    }
+
+    // Inject agentbox-internal meta vars so daemon config_file templates can use them.
+    let provider_type_str = match cfg.provider.provider_type {
+        ProviderType::Anthropic => "anthropic",
+        ProviderType::Openai => "openai",
+        ProviderType::OpenaiCompatible => "openai-compatible",
+    };
+    final_env_vars.push(format!("PROVIDER_TYPE={provider_type_str}"));
+    final_env_vars.push(format!("MODEL={}", cfg.provider.model));
+    final_env_vars.push(format!("API_KEY={resolved_key}"));
+    if let Some(base_url) = &cfg.provider.base_url {
+        final_env_vars.push(format!("BASE_URL={base_url}"));
+    } else {
+        final_env_vars.push("BASE_URL=".to_string());
     }
 
     // Create state volume if needed.
@@ -766,7 +786,7 @@ async fn run_daemon(
         image: base_image,
         bind_mounts,
         volume_mounts,
-        env_vars: final_env_vars,
+        env_vars: final_env_vars.clone(),
         cpu_limit: cfg.resources.cpus,
         memory_limit,
         extra_hosts: host_gateway_hosts(),
@@ -787,21 +807,46 @@ async fn run_daemon(
 
     // Run non-interactive setup if specified.
     if let Some(setup) = &daemon_cfg.setup {
-        if setup.method == "exec" {
-            if let Some(cmd) = &setup.command {
-                eprint!("Running daemon setup ({})... ", cmd.join(" "));
-                let result = docker.exec_command(&container_id, cmd, &[]).await?;
-                if result.exit_code != 0 {
-                    eprintln!("failed.");
-                    docker.stop_container(&container_id).await.ok();
-                    docker.remove_container(&container_id).await.ok();
-                    return Err(EngineError::DaemonSetupFailed {
-                        code: result.exit_code,
-                        stderr: String::from_utf8_lossy(&result.stderr).into_owned(),
-                    });
+        match setup.method.as_str() {
+            "exec" => {
+                if let Some(cmd) = &setup.command {
+                    eprint!("Running daemon setup ({})... ", cmd.join(" "));
+                    let result = docker.exec_command(&container_id, cmd, &[]).await?;
+                    if result.exit_code != 0 {
+                        eprintln!("failed.");
+                        docker.stop_container(&container_id).await.ok();
+                        docker.remove_container(&container_id).await.ok();
+                        return Err(EngineError::DaemonSetupFailed {
+                            code: result.exit_code,
+                            stderr: String::from_utf8_lossy(&result.stderr).into_owned(),
+                        });
+                    }
+                    eprintln!("done.");
                 }
-                eprintln!("done.");
             }
+            "config_file" => {
+                // Render the template and write it to the specified path inside the container.
+                if let (Some(path), Some(template)) =
+                    (&setup.config_path, &setup.config_template)
+                {
+                    eprint!("Writing daemon config to {path}... ");
+                    // Render {{var}} placeholders the same way agent configs are rendered.
+                    let rendered = render_daemon_template(template, &final_env_vars);
+                    // Ensure the parent directory exists.
+                    let parent = std::path::Path::new(path)
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("/tmp");
+                    let mkdir_cmd = vec!["mkdir".into(), "-p".into(), parent.to_string()];
+                    docker.exec_command(&container_id, &mkdir_cmd, &[]).await?;
+                    docker
+                        .write_file(&container_id, path, rendered.as_bytes())
+                        .await?;
+                    eprintln!("done.");
+                }
+            }
+            // "env" — all configuration is via env vars already injected; nothing extra needed.
+            _ => {}
         }
     }
 
@@ -824,6 +869,21 @@ fn print_daemon_ports(daemon_cfg: &crate::manifest::DaemonConfig) {
         let flag = if p.optional { " (optional)" } else { "" };
         eprintln!("  localhost:{} → container:{}{}", p.host_port, p.container_port, flag);
     }
+}
+
+/// Substitute `{{ENV_VAR}}` placeholders in a daemon config template by
+/// looking up the value in the injected env var list (`KEY=VALUE` pairs).
+fn render_daemon_template(template: &str, env_vars: &[String]) -> String {
+    let env_map: std::collections::HashMap<&str, &str> = env_vars
+        .iter()
+        .filter_map(|kv| kv.split_once('='))
+        .collect();
+
+    let mut out = template.to_owned();
+    for (k, v) in &env_map {
+        out = out.replace(&format!("{{{{{k}}}}}"), v);
+    }
+    out
 }
 
 // ── Shared install + config helpers ──────────────────────────────────────────

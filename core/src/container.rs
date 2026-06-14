@@ -66,6 +66,10 @@ pub struct BoxInfo {
     pub project_name: Option<String>,
     /// "persistent" or "ephemeral". Ephemeral boxes in the list are orphaned leftovers.
     pub lifecycle: String,
+    /// True if this is a daemon-mode agent (always-on service, not an interactive session).
+    pub is_daemon: bool,
+    /// Host ports bound by a daemon box (host_port:container_port pairs).
+    pub bound_ports: Vec<(u16, u16)>,
 }
 
 /// A cached agent install image (`agentbox-cache-{agent_id}:latest`).
@@ -645,6 +649,19 @@ impl ContainerBackend for DockerBackend {
                     .cloned()
                     .unwrap_or_else(|| "persistent".to_string());
 
+                let is_daemon = labels
+                    .get("agentbox.daemon")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+
+                // Extract bound ports from the Docker port list (daemon boxes only).
+                let bound_ports: Vec<(u16, u16)> = c
+                    .ports
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|p| Some((p.public_port?, p.private_port)))
+                    .collect();
+
                 Some(BoxInfo {
                     box_name,
                     agent_id,
@@ -654,6 +671,8 @@ impl ContainerBackend for DockerBackend {
                     folder,
                     project_name,
                     lifecycle,
+                    is_daemon,
+                    bound_ports,
                 })
             })
             .collect();
