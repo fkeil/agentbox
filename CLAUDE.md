@@ -57,13 +57,13 @@ agentbox/
 `box.yaml` — user-facing config. See `agentbox-spec.md §7` for the full schema.
 Agent manifest YAML — see `agentbox-spec.md §8` for the full schema including daemon-specific fields.
 
-## Phased Roadmap (current target: Phase 1)
+## Phased Roadmap (current target: Phase 4)
 
-**Phase 1 (MVP):** CLI + core. Docker only. Two hardcoded agents (Claude Code and OpenCode — no manifest loader yet). Provider types: all three including local. Auth: `${env:...}` and `auth: none`. Sync: `mount` only. Lifecycle: `ephemeral` only. Commands: `agentbox up --config box.yaml`, `agentbox down`.
+**Phase 1 ✅ (MVP):** CLI + core. Docker only. Two hardcoded agents (Claude Code and OpenCode). Provider types: all three including local. Auth: `${env:...}` and `auth: none`. Sync: `mount` only. Lifecycle: `ephemeral` only. Commands: `agentbox up --config box.yaml`, `agentbox down`.
 
-**Phase 2:** Manifest system (loader, validator, `supported_providers` checking, image caching). Convert hardcoded agents to manifests. Add Pi as the third agent via manifest only.
+**Phase 2 ✅ (Manifest system):** YAML manifest loader + validator. `supported_providers` compat checking. Image caching. Three agents via manifests: Claude Code, OpenCode, Pi. `extra_env` in box.yaml for OAuth tokens. `agentbox agents` command.
 
-**Phase 3:** Ratatui TUI. Persistent lifecycle (named boxes, state volumes).
+**Phase 3 ✅ (TUI + persistent boxes):** Ratatui TUI (`agentbox-tui`): Home screen lists persistent boxes, Box detail (Attach/Stop/Remove), 5-step wizard (agent → folder → lifecycle → provider → summary). Persistent lifecycle: named containers, state volumes at `/root` keyed by box name. `agentbox list` command. `attach_box`, `stop_box`, `remove_box` engine calls.
 
 **Phase 4:** Tauri GUI. Snapshot sync (copy-in / git-backed diff / approve-writeback).
 

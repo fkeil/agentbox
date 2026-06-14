@@ -14,8 +14,10 @@ struct Cli {
 enum Command {
     /// Start an agent box from a config file
     Up(commands::up::UpArgs),
-    /// Stop and remove a named box
+    /// Stop and remove a named persistent box
     Down(commands::down::DownArgs),
+    /// List all persistent boxes
+    List(commands::list::ListArgs),
     /// List available agents (manifests + built-ins)
     Agents(commands::agents::AgentsArgs),
 }
@@ -26,6 +28,7 @@ async fn main() {
     let result = match cli.command {
         Command::Up(args) => commands::up::run(args).await,
         Command::Down(args) => commands::down::run(args).await,
+        Command::List(args) => commands::list::run(args).await,
         Command::Agents(args) => commands::agents::run(args).await,
     };
     if let Err(e) = result {
