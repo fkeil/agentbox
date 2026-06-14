@@ -1,0 +1,61 @@
+id: opencode
+display_name: OpenCode
+base_image: node:22-slim
+
+install:
+  method: npm
+  apt_deps:
+    - build-essential
+    - python3
+  packages:
+    - opencode-ai
+    - "@ai-sdk/openai-compatible"
+
+supported_providers:
+  - anthropic
+  - openai
+  - openai-compatible
+
+auth:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  openai-compatible:
+    api_key_env: OPENAI_API_KEY
+
+config:
+  path: /root/.config/opencode/config.json
+  by_provider_type:
+    anthropic: |
+      {
+        "$schema": "https://opencode.ai/config.json",
+        "model": "anthropic/{{model}}"
+      }
+    openai: |
+      {
+        "$schema": "https://opencode.ai/config.json",
+        "model": "openai/{{model}}"
+      }
+    openai-compatible: |
+      {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+          "{{provider_slug}}": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "{{provider_name}}",
+            "options": { "baseURL": "{{base_url}}" },
+            "models": { "{{model}}": { "name": "{{model}}" } }
+          }
+        },
+        "model": "{{provider_slug}}/{{model}}"
+      }
+
+launch:
+  command: [opencode]
+  args_by_provider_type:
+    anthropic: ["-m", "anthropic/{{model}}"]
+    openai: ["-m", "openai/{{model}}"]
+    openai-compatible: ["-m", "{{provider_slug}}/{{model}}"]
+
+workdir: /workspace

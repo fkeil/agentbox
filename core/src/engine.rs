@@ -10,7 +10,7 @@ use crate::provider::{self, ProviderError};
 pub enum EngineError {
     #[error("{0}")]
     Config(#[from] ConfigError),
-    #[error("unknown agent `{0}`. Known agents: claude-code, opencode")]
+    #[error("unknown agent `{0}`. Built-ins: claude-code, opencode. Or add a manifests/{0}.yaml file.")]
     UnknownAgent(String),
     #[error("{0}")]
     Provider(#[from] ProviderError),
@@ -34,7 +34,17 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
     config::validate_config(&cfg)?;
 
     // --- 2. Resolve agent ---
-    let agent = agents::find_agent(&cfg.agent.0)
+    // Look for manifests/ next to the config file, then relative to CWD.
+    let manifests_dir = config_path
+        .parent()
+        .map(|d| d.join("manifests"))
+        .filter(|d| d.is_dir())
+        .or_else(|| {
+            let cwd = std::env::current_dir().ok()?;
+            let d = cwd.join("manifests");
+            d.is_dir().then_some(d)
+        });
+    let agent = agents::find_agent(&cfg.agent.0, manifests_dir.as_deref())
         .ok_or_else(|| EngineError::UnknownAgent(cfg.agent.0.clone()))?;
 
     // --- 3. Provider compatibility ---

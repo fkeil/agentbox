@@ -1,0 +1,29 @@
+id: claude-code
+display_name: Claude Code
+base_image: node:22-slim
+
+install:
+  method: npm
+  apt_deps:
+    - build-essential
+    - python3
+  packages:
+    - "@anthropic-ai/claude-code"
+
+supported_providers:
+  - anthropic
+
+auth:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+    base_url_env: ANTHROPIC_BASE_URL
+
+config:
+  path: /root/.claude/settings.json
+  template: |
+    { "model": "{{model}}" }
+
+launch:
+  command: [claude]
+
+workdir: /workspace

@@ -1,0 +1,37 @@
+id: pi
+display_name: Pi
+base_image: node:22-slim
+
+install:
+  method: npm
+  apt_deps:
+    - build-essential
+    - python3
+  packages:
+    - "@earendil-works/pi-coding-agent"
+
+supported_providers:
+  - anthropic
+  - openai
+  - openai-compatible
+
+auth:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  openai-compatible:
+    api_key_env: OPENAI_API_KEY
+    base_url_env: OPENAI_BASE_URL
+
+# Pi is entirely CLI-driven — no config file needed.
+config: ~
+
+launch:
+  command: [pi]
+  args_by_provider_type:
+    anthropic: ["--model", "anthropic/{{model}}"]
+    openai: ["--model", "openai/{{model}}"]
+    openai-compatible: ["--provider", "openai", "--model", "{{model}}"]
+
+workdir: /workspace
