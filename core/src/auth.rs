@@ -38,6 +38,17 @@ pub enum AuthError {
     InvalidSyntax(String),
 }
 
+/// Like `resolve_auth` but also accepts bare literal strings (no `${…}` wrapper).
+/// Use this for `extra_env` values where the user may write a literal string.
+pub fn resolve_value(reference: &str) -> Result<ResolvedSecret, AuthError> {
+    let trimmed = reference.trim();
+    if trimmed.starts_with("${") || trimmed == "none" {
+        resolve_auth(reference)
+    } else {
+        Ok(ResolvedSecret(trimmed.to_owned()))
+    }
+}
+
 /// Resolve an auth reference string to a plaintext secret.
 ///
 /// Formats:

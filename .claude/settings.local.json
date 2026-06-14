@@ -16,7 +16,10 @@
       "Bash(git *)",
       "Bash(docker rm *)",
       "Bash(docker run *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:opencode.ai)"
     ]
   }
 }
