@@ -10,8 +10,10 @@ struct BoxInfoDto {
     box_name: String,
     agent_id: String,
     agent_display_name: String,
+    project_name: Option<String>,
     status: String,
     folder: Option<String>,
+    lifecycle: String,
 }
 
 impl From<agentbox_core::BoxInfo> for BoxInfoDto {
@@ -24,7 +26,28 @@ impl From<agentbox_core::BoxInfo> for BoxInfoDto {
             box_name: b.box_name,
             agent_id: b.agent_id,
             agent_display_name: b.agent_display_name,
+            project_name: b.project_name,
             folder: b.folder,
+            lifecycle: b.lifecycle,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct CacheImageDto {
+    agent_id: String,
+    image_name: String,
+    size_mb: f64,
+    created_unix: i64,
+}
+
+impl From<agentbox_core::CacheImage> for CacheImageDto {
+    fn from(img: agentbox_core::CacheImage) -> Self {
+        Self {
+            agent_id: img.agent_id,
+            image_name: img.image_name,
+            size_mb: (img.size_mb * 10.0).round() / 10.0,
+            created_unix: img.created_unix,
         }
     }
 }
@@ -34,6 +57,7 @@ struct AgentEntryDto {
     id: String,
     display_name: String,
     source: String,
+    oauth_supported: bool,
 }
 
 #[derive(Serialize)]
@@ -71,10 +95,13 @@ struct ProviderInput {
 struct BoxConfigInput {
     agent: String,
     name: Option<String>,
+    project_name: Option<String>,
     folder: String,
     lifecycle: String,
     sync: String,
     provider: ProviderInput,
+    /// Pi-specific: full models.json content as a JSON string (optional)
+    pi_models_json: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -97,19 +124,17 @@ async fn get_boxes() -> Result<Vec<BoxInfoDto>, String> {
 #[tauri::command]
 async fn get_agents() -> Vec<AgentEntryDto> {
     use agentbox_core::manifest;
-    let manifests_dir = std::env::current_dir()
-        .ok()
-        .map(|d| d.join("manifests"))
-        .filter(|d| d.is_dir());
+    let manifests_dir = find_manifests_dir();
 
     let mut entries: Vec<AgentEntryDto> = manifests_dir
-        .as_deref()
+        .as_ref()
         .map(|d| {
-            manifest::list_manifests(d)
+            manifest::list_manifests_meta(d)
                 .into_iter()
-                .map(|(id, name)| AgentEntryDto {
-                    id,
-                    display_name: name,
+                .map(|m| AgentEntryDto {
+                    oauth_supported: m.oauth_supported,
+                    id: m.id,
+                    display_name: m.display_name,
                     source: "manifest".into(),
                 })
                 .collect::<Vec<_>>()
@@ -117,14 +142,18 @@ async fn get_agents() -> Vec<AgentEntryDto> {
         .unwrap_or_default();
 
     // Hardcoded fallbacks not already covered by a manifest
-    let manifest_ids: std::collections::HashSet<&str> =
-        entries.iter().map(|e| e.id.as_str()).collect();
-    for (id, name) in [("claude-code", "Claude Code"), ("opencode", "OpenCode")] {
+    let manifest_ids: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.id.clone()).collect();
+    for (id, name, oauth) in [
+        ("claude-code", "Claude Code", true),
+        ("opencode", "OpenCode", false),
+    ] {
         if !manifest_ids.contains(id) {
             entries.push(AgentEntryDto {
                 id: id.into(),
                 display_name: name.into(),
                 source: "builtin".into(),
+                oauth_supported: oauth,
             });
         }
     }
@@ -156,6 +185,7 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
     let box_cfg = agentbox_core::config::BoxConfig {
         agent: agentbox_core::config::AgentId(config.agent),
         name: config.name,
+        project_name: config.project_name.filter(|s| !s.trim().is_empty()),
         folder: agentbox_core::config::FolderConfig {
             path: folder_path.clone(),
             sync,
@@ -167,7 +197,11 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
             model: config.provider.model,
             base_url: config.provider.base_url,
             auth: config.provider.auth,
-            raw: serde_json::Value::Null,
+            raw: config.pi_models_json
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or(serde_json::Value::Null),
         },
         network: agentbox_core::config::NetworkMode::Open,
         resources: agentbox_core::config::ResourceConfig::default(),
@@ -193,11 +227,68 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
     })
 }
 
+/// Open a system terminal and run `agentbox attach <box-name>`.
+#[tauri::command]
+async fn attach_box_terminal(box_name: String, title: Option<String>) -> Result<(), String> {
+    let bin = find_agentbox_bin();
+    let title_esc = title
+        .as_deref()
+        .map(|t| format!("printf \"\\033]0;{}\\007\"; ", t.replace('"', "\\\"")))
+        .unwrap_or_default();
+    let cmd = format!("{title_esc}'{bin}' attach '{box_name}'");
+    launch_terminal(&cmd).map_err(|e| e.to_string())
+}
+
 /// Open a system terminal and run `agentbox up --config <path>`.
 #[tauri::command]
-async fn open_in_terminal(config_path: String) -> Result<(), String> {
-    let cmd = format!("agentbox up --config '{config_path}'");
+async fn open_in_terminal(config_path: String, title: Option<String>) -> Result<(), String> {
+    let bin = find_agentbox_bin();
+    let title_esc = title
+        .as_deref()
+        .map(|t| format!("printf \"\\033]0;{}\\007\"; ", t.replace('"', "\\\"")))
+        .unwrap_or_default();
+    let cmd = format!("{title_esc}'{bin}' up --config '{config_path}'");
     launch_terminal(&cmd).map_err(|e| e.to_string())
+}
+
+/// Find the bundled `manifests/` directory by walking up from the exe.
+fn find_manifests_dir() -> Option<std::path::PathBuf> {
+    let mut dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    while let Some(d) = dir {
+        let candidate = d.join("manifests");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    None
+}
+
+/// Find the `agentbox` CLI binary. Walks up from the running executable's
+/// directory looking for `target/{debug,release}/agentbox` in ancestor dirs,
+/// then falls back to ~/.cargo/bin, then bare "agentbox" (PATH).
+fn find_agentbox_bin() -> String {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            for profile in &["debug", "release"] {
+                let candidate = d.join("target").join(profile).join("agentbox");
+                if candidate.is_file() {
+                    return candidate.to_string_lossy().into_owned();
+                }
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let p = PathBuf::from(home).join(".cargo/bin/agentbox");
+        if p.exists() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    "agentbox".to_string()
 }
 
 /// Return the snapshot diff for `host_folder` if the diff file exists.
@@ -232,6 +323,28 @@ async fn stop_box(box_name: String) -> Result<(), String> {
 #[tauri::command]
 async fn remove_box(box_name: String) -> Result<(), String> {
     agentbox_core::remove_box(&box_name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn kill_box(box_name: String) -> Result<(), String> {
+    agentbox_core::kill_box(&box_name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_cache_images() -> Result<Vec<CacheImageDto>, String> {
+    agentbox_core::list_cache_images()
+        .await
+        .map_err(|e| e.to_string())
+        .map(|v| v.into_iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+async fn remove_cache_image(agent_id: String) -> Result<(), String> {
+    agentbox_core::remove_cache_image(&agent_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -305,10 +418,14 @@ fn main() {
             get_agents,
             prepare_launch,
             open_in_terminal,
+            attach_box_terminal,
             get_snapshot_diff,
             apply_snapshot_changes,
             stop_box,
             remove_box,
+            kill_box,
+            list_cache_images,
+            remove_cache_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentbox GUI");

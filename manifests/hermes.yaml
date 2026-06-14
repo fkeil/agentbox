@@ -1,0 +1,48 @@
+# ⚠ DRAFT / STUB — Hermes-Agent manifest
+# §16.3 OPEN QUESTION: `hermes setup` is interactive by default.
+# Confirm the config-file or env-driven equivalent before finalising this manifest.
+# See Hermes docs/source at: https://github.com/nous-research/hermes-agent
+
+id: hermes
+display_name: Hermes
+base_image: ubuntu:22.04
+
+install:
+  # TODO: Hermes uses an install.sh script, not npm. Replace once confirmed.
+  method: npm
+  packages: []
+
+supported_providers:
+  - openai
+  - openai-compatible
+  - anthropic
+
+auth:
+  openai:
+    api_key_env: OPENAI_API_KEY
+    base_url_env: OPENAI_BASE_URL
+  openai-compatible:
+    api_key_env: OPENAI_API_KEY
+    base_url_env: OPENAI_BASE_URL
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+
+launch:
+  command: [hermes, start]
+  args: []
+
+healthcheck: ["hermes", "--version"]
+
+daemon:
+  requires_lifecycle: persistent
+  # nested_sandbox disables Hermes' own Docker sandbox (agentbox already provides isolation).
+  nested_sandbox: local
+  setup:
+    # TODO: confirm §16.3 — change to "exec" + command if env-vars are not enough.
+    method: env
+  ports:
+    - container_port: 8080
+      host_port: 8080
+      optional: false
+
+workdir: /workspace

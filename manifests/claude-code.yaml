@@ -26,4 +26,10 @@ config:
 launch:
   command: [claude]
 
+healthcheck: ["claude", "--version"]
+
+oauth:
+  supported: true
+  cache_path: /root/.claude
+
 workdir: /workspace

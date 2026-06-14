@@ -107,6 +107,89 @@ pub fn apply_approved_changes(
     Ok(())
 }
 
+// ── Snapshot conflict detection ───────────────────────────────────────────────
+
+/// (file_size_bytes, mtime_unix_secs) snapshot taken before the session.
+pub type FileMeta = (u64, u64);
+
+/// Record the size+mtime of every file in `dir` before a snapshot session starts.
+pub fn snapshot_host_meta(dir: &Path) -> HashMap<String, FileMeta> {
+    let mut map = HashMap::new();
+    snapshot_meta_recursive(dir, dir, &mut map);
+    map
+}
+
+fn snapshot_meta_recursive(root: &Path, dir: &Path, out: &mut HashMap<String, FileMeta>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        if rel.starts_with(".git") { continue }
+        if meta.is_dir() {
+            snapshot_meta_recursive(root, &path, out);
+        } else {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            out.insert(rel, (meta.len(), mtime));
+        }
+    }
+}
+
+/// Return paths from `candidates` whose host file changed since the snapshot.
+pub fn detect_conflicts(
+    host_dir: &Path,
+    candidates: &[String],
+    pre_meta: &HashMap<String, FileMeta>,
+) -> Vec<String> {
+    candidates
+        .iter()
+        .filter(|p| {
+            let Some(&(old_size, old_mtime)) = pre_meta.get(*p) else {
+                return false; // new file on host — no conflict
+            };
+            let host_path = host_dir.join(p);
+            let Ok(meta) = std::fs::metadata(&host_path) else {
+                return false; // file deleted on host
+            };
+            let cur_mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            meta.len() != old_size || cur_mtime != old_mtime
+        })
+        .cloned()
+        .collect()
+}
+
+/// Path where the pre-snapshot file metadata is stored alongside the diff.
+pub fn meta_path_for(host_dir: &Path) -> std::path::PathBuf {
+    diff_path_for(host_dir).with_extension("meta.json")
+}
+
+pub fn store_snapshot_meta(
+    meta: &HashMap<String, FileMeta>,
+    host_dir: &Path,
+) -> Result<(), std::io::Error> {
+    let json = serde_json::to_string(meta).expect("infallible");
+    std::fs::write(meta_path_for(host_dir), json)
+}
+
+pub fn load_snapshot_meta(host_dir: &Path) -> Option<HashMap<String, FileMeta>> {
+    let json = std::fs::read_to_string(meta_path_for(host_dir)).ok()?;
+    serde_json::from_str(&json).ok()
+}
+
 // ── Diff persistence ──────────────────────────────────────────────────────────
 
 /// Where the snapshot diff for `host_dir` is stored after a run.

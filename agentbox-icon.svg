@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b27"/>
+    </linearGradient>
+    <linearGradient id="topFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e2a45"/>
+      <stop offset="100%" stop-color="#0a1e33"/>
+    </linearGradient>
+    <linearGradient id="leftFace" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#081828"/>
+      <stop offset="100%" stop-color="#050f1a"/>
+    </linearGradient>
+    <linearGradient id="rightFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0c2035"/>
+      <stop offset="100%" stop-color="#071628"/>
+    </linearGradient>
+    <!-- Glow filter for edges and robot -->
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Stronger glow for eyes / antenna -->
+    <filter id="strongGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ── Background ── -->
+  <rect width="512" height="512" rx="88" fill="url(#bg)"/>
+
+  <!-- ── Isometric box faces ──
+       Top face diamond:  top(256,148)  right(380,212)  front(256,276)  left(132,212)
+       Box height: 120px
+       Bottom corners:  right(380,332)  front(256,396)  left(132,332)
+  -->
+
+  <!-- Top face -->
+  <polygon points="256,148 380,212 256,276 132,212" fill="url(#topFace)"/>
+  <!-- Left face -->
+  <polygon points="132,212 132,332 256,396 256,276" fill="url(#leftFace)"/>
+  <!-- Right face -->
+  <polygon points="380,212 380,332 256,396 256,276" fill="url(#rightFace)"/>
+
+  <!-- ── Subtle circuit traces on box faces ── -->
+  <g opacity="0.18" stroke="#00c8ff" stroke-width="1" fill="none">
+    <!-- left face traces -->
+    <line x1="160" y1="248" x2="196" y2="270"/>
+    <line x1="196" y1="270" x2="196" y2="314"/>
+    <circle cx="196" cy="314" r="3" fill="#00c8ff" stroke="none"/>
+    <line x1="148" y1="295" x2="196" y2="322"/>
+
+    <!-- right face traces -->
+    <line x1="352" y1="248" x2="316" y2="270"/>
+    <line x1="316" y1="270" x2="316" y2="314"/>
+    <circle cx="316" cy="314" r="3" fill="#00c8ff" stroke="none"/>
+    <line x1="364" y1="295" x2="316" y2="322"/>
+
+    <!-- top face inner ring -->
+    <polygon points="256,168 352,212 256,256 160,212" opacity="0.5"/>
+    <circle cx="256" cy="212" r="6" fill="#00c8ff" stroke="none" opacity="0.6"/>
+  </g>
+
+  <!-- ── Glowing box wireframe edges ── -->
+  <g filter="url(#glow)" fill="none" stroke="#00c8ff" stroke-width="2.5"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- top face outline -->
+    <polygon points="256,148 380,212 256,276 132,212"/>
+    <!-- vertical edges -->
+    <line x1="132" y1="212" x2="132" y2="332"/>
+    <line x1="380" y1="212" x2="380" y2="332"/>
+    <line x1="256" y1="276" x2="256" y2="396"/>
+    <!-- bottom edges -->
+    <line x1="132" y1="332" x2="256" y2="396"/>
+    <line x1="380" y1="332" x2="256" y2="396"/>
+  </g>
+
+  <!-- ── Robot / Agent character emerging from the box ──
+       Head: 218..294 × 72..138  (76×66)
+       Neck: 244..268 × 132..155  (24×23) — overlaps box top at y=148
+  -->
+
+  <!-- Neck (connects head to box top) -->
+  <rect x="244" y="132" width="24" height="26" rx="4" fill="#081828"
+        stroke="#00c8ff" stroke-width="1.5" filter="url(#glow)"/>
+
+  <!-- Head outline / casing -->
+  <rect x="216" y="70" width="80" height="68" rx="12" fill="#081828"/>
+  <rect x="216" y="70" width="80" height="68" rx="12" fill="none"
+        stroke="#00c8ff" stroke-width="2.5" filter="url(#glow)"/>
+
+  <!-- Ear panels -->
+  <rect x="204" y="84" width="12" height="18" rx="3" fill="#081828"
+        stroke="#00c8ff" stroke-width="1.5"/>
+  <rect x="296" y="84" width="12" height="18" rx="3" fill="#081828"
+        stroke="#00c8ff" stroke-width="1.5"/>
+  <!-- Ear detail dots -->
+  <circle cx="210" cy="93" r="2.5" fill="#00c8ff" opacity="0.6"/>
+  <circle cx="302" cy="93" r="2.5" fill="#00c8ff" opacity="0.6"/>
+
+  <!-- Eye sockets -->
+  <circle cx="243" cy="97" r="11" fill="#020d16"/>
+  <circle cx="269" cy="97" r="11" fill="#020d16"/>
+
+  <!-- Eye glow aura -->
+  <circle cx="243" cy="97" r="11" fill="#00c8ff" opacity="0.20" filter="url(#strongGlow)"/>
+  <circle cx="269" cy="97" r="11" fill="#00c8ff" opacity="0.20" filter="url(#strongGlow)"/>
+
+  <!-- Eye irises -->
+  <circle cx="243" cy="97" r="8" fill="none" stroke="#00c8ff" stroke-width="2"
+          filter="url(#glow)"/>
+  <circle cx="269" cy="97" r="8" fill="none" stroke="#00c8ff" stroke-width="2"
+          filter="url(#glow)"/>
+
+  <!-- Eye pupils (glowing) -->
+  <circle cx="243" cy="97" r="4" fill="#00c8ff" filter="url(#strongGlow)"/>
+  <circle cx="269" cy="97" r="4" fill="#00c8ff" filter="url(#strongGlow)"/>
+
+  <!-- Eye specular highlights -->
+  <circle cx="245.5" cy="94.5" r="1.8" fill="white" opacity="0.9"/>
+  <circle cx="271.5" cy="94.5" r="1.8" fill="white" opacity="0.9"/>
+
+  <!-- Mouth — segmented LED bar -->
+  <rect x="232" y="120" width="48" height="8" rx="4" fill="#020d16"
+        stroke="#00c8ff" stroke-width="1.5"/>
+  <rect x="236" y="122" width="8"  height="4" rx="2" fill="#00c8ff" opacity="0.8"/>
+  <rect x="248" y="122" width="8"  height="4" rx="2" fill="#00c8ff" opacity="0.5"/>
+  <rect x="260" y="122" width="8"  height="4" rx="2" fill="#00c8ff" opacity="0.8"/>
+  <rect x="272" y="122" width="4"  height="4" rx="2" fill="#00c8ff" opacity="0.4"/>
+
+  <!-- Antenna stem -->
+  <line x1="256" y1="70" x2="256" y2="48"
+        stroke="#00c8ff" stroke-width="2.5" stroke-linecap="round" filter="url(#glow)"/>
+
+  <!-- Antenna tip (bright) -->
+  <circle cx="256" cy="43" r="6" fill="#00c8ff" filter="url(#strongGlow)"/>
+  <circle cx="256" cy="43" r="3" fill="white" opacity="0.9"/>
+
+  <!-- Antenna signal rings -->
+  <circle cx="256" cy="43" r="13" fill="none" stroke="#00c8ff" stroke-width="1"
+          opacity="0.35"/>
+  <circle cx="256" cy="43" r="21" fill="none" stroke="#00c8ff" stroke-width="0.8"
+          opacity="0.18"/>
+  <circle cx="256" cy="43" r="30" fill="none" stroke="#00c8ff" stroke-width="0.6"
+          opacity="0.08"/>
+
+  <!-- Corner accent dots on box bottom rim -->
+  <circle cx="132" cy="332" r="4" fill="#00c8ff" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="380" cy="332" r="4" fill="#00c8ff" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="256" cy="396" r="4" fill="#00c8ff" opacity="0.5" filter="url(#glow)"/>
+</svg>

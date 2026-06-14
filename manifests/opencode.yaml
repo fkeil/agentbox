@@ -58,4 +58,6 @@ launch:
     openai: ["-m", "openai/{{model}}"]
     openai-compatible: ["-m", "{{provider_slug}}/{{model}}"]
 
+healthcheck: ["opencode", "--version"]
+
 workdir: /workspace

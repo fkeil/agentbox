@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-cli-tui:
+    name: CLI + TUI (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            suffix: ""
+            artifact: linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: ""
+            artifact: macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+            artifact: windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/agentbox${{ matrix.suffix }} dist/
+          cp target/${{ matrix.target }}/release/agentbox-tui${{ matrix.suffix }} dist/
+          cd dist && tar czf ../agentbox-${{ matrix.artifact }}.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentbox-${{ matrix.artifact }}
+          path: agentbox-${{ matrix.artifact }}.tar.gz
+
+  build-gui:
+    name: GUI (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: gui-linux
+          - os: macos-latest
+            artifact: gui-macos
+          - os: windows-latest
+            artifact: gui-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-tauri
+        run: cargo install tauri-cli --locked
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "gui/src-tauri -> target"
+
+      - name: Build GUI bundle
+        working-directory: gui/src-tauri
+        run: cargo tauri build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentbox-${{ matrix.artifact }}
+          path: gui/src-tauri/target/release/bundle/
+
+  release:
+    name: Create GitHub Release
+    needs: [build-cli-tui, build-gui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**
+          generate_release_notes: true

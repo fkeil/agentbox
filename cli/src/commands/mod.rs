@@ -1,4 +1,7 @@
 pub mod agents;
+pub mod attach;
 pub mod down;
+pub mod images;
+pub mod kill;
 pub mod list;
 pub mod up;

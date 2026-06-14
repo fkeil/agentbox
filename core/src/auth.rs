@@ -59,7 +59,7 @@ pub fn resolve_value(reference: &str) -> Result<ResolvedSecret, AuthError> {
 pub fn resolve_auth(reference: &str) -> Result<ResolvedSecret, AuthError> {
     let reference = reference.trim();
 
-    if reference == "none" {
+    if reference == "none" || reference == "oauth" {
         return Ok(ResolvedSecret(String::new()));
     }
 
@@ -139,5 +139,13 @@ mod tests {
     fn resolve_invalid_syntax() {
         let err = resolve_auth("plaintext-secret").unwrap_err();
         assert!(matches!(err, AuthError::InvalidSyntax(_)));
+    }
+
+    #[test]
+    fn oauth_keyword_resolves_to_empty() {
+        // `auth: oauth` means the agent handles its own token flow; the engine
+        // injects an empty string so the env var is present but blank.
+        let s = resolve_auth("oauth").unwrap();
+        assert_eq!(s.as_str(), "");
     }
 }
