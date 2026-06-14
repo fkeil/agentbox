@@ -1,13 +1,18 @@
 use async_trait::async_trait;
 use bollard::container::{
-    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    CreateContainerOptions, ListContainersOptions, RemoveContainerOptions, StartContainerOptions,
+    StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
-use bollard::models::{HostConfig, Mount, MountTypeEnum, Resources};
+use bollard::models::{HostConfig, Mount, MountTypeEnum};
+use bollard::volume::{CreateVolumeOptions, RemoveVolumeOptions};
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::Path;
+
+// ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct ContainerId(pub String);
@@ -24,6 +29,8 @@ pub struct ContainerSpec {
     pub image: String,
     /// (host_path, container_path) bind-mount pairs.
     pub bind_mounts: Vec<(String, String)>,
+    /// (volume_name, container_path) named-volume mount pairs.
+    pub volume_mounts: Vec<(String, String)>,
     /// "KEY=VALUE" environment variables.
     pub env_vars: Vec<String>,
     pub cpu_limit: Option<f64>,
@@ -32,6 +39,25 @@ pub struct ContainerSpec {
     pub extra_hosts: Vec<String>,
     pub network_mode: String,
     pub workdir: String,
+    /// Docker labels to attach to the container.
+    pub labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContainerStatus {
+    Running,
+    Stopped,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoxInfo {
+    pub box_name: String,
+    pub agent_id: String,
+    pub agent_display_name: String,
+    pub container_id: String,
+    pub status: ContainerStatus,
+    /// Host folder bind-mounted into the container, if readable from labels.
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +74,11 @@ pub enum ContainerError {
     Tar(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("box `{0}` not found")]
+    BoxNotFound(String),
 }
+
+// ── Trait ─────────────────────────────────────────────────────────────────────
 
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
@@ -83,7 +113,24 @@ pub trait ContainerBackend: Send + Sync {
         id: &ContainerId,
         image_name: &str,
     ) -> Result<(), ContainerError>;
+    /// Returns `Some(status)` if the named container exists, `None` if not.
+    async fn container_status(&self, name: &str) -> Option<ContainerStatus>;
+    /// Create a named Docker volume (no-op if it already exists).
+    async fn create_volume(&self, name: &str) -> Result<(), ContainerError>;
+    /// Returns true if a named volume exists.
+    async fn volume_exists(&self, name: &str) -> bool;
+    /// Remove a named volume (best-effort, ignores not-found).
+    async fn remove_volume(&self, name: &str) -> Result<(), ContainerError>;
+    /// Return labels attached to a container.
+    async fn get_container_labels(
+        &self,
+        id: &ContainerId,
+    ) -> Result<HashMap<String, String>, ContainerError>;
+    /// List all agentbox-managed containers.
+    async fn list_boxes(&self) -> Result<Vec<BoxInfo>, ContainerError>;
 }
+
+// ── Docker implementation ─────────────────────────────────────────────────────
 
 pub struct DockerBackend {
     client: bollard::Docker,
@@ -121,13 +168,12 @@ impl ContainerBackend for DockerBackend {
     }
 
     async fn create_container(&self, spec: &ContainerSpec) -> Result<ContainerId, ContainerError> {
-        // Pull image if not already present.
         match self.client.inspect_image(&spec.image).await {
             Ok(_) => {}
             Err(_) => self.pull_image(&spec.image).await?,
         }
 
-        let mounts: Vec<Mount> = spec
+        let bind_mounts: Vec<Mount> = spec
             .bind_mounts
             .iter()
             .map(|(src, dst)| Mount {
@@ -139,37 +185,48 @@ impl ContainerBackend for DockerBackend {
             })
             .collect();
 
-        let resources = Resources {
-            nano_cpus: spec
-                .cpu_limit
-                .map(|c| (c * 1_000_000_000.0) as i64),
-            memory: spec.memory_limit.map(|m| m as i64),
-            ..Default::default()
-        };
+        let volume_mounts: Vec<Mount> = spec
+            .volume_mounts
+            .iter()
+            .map(|(vol, dst)| Mount {
+                target: Some(dst.clone()),
+                source: Some(vol.clone()),
+                typ: Some(MountTypeEnum::VOLUME),
+                ..Default::default()
+            })
+            .collect();
+
+        let all_mounts: Vec<Mount> = bind_mounts.into_iter().chain(volume_mounts).collect();
 
         let host_config = HostConfig {
-            mounts: Some(mounts),
+            mounts: Some(all_mounts),
             network_mode: Some(spec.network_mode.clone()),
             extra_hosts: if spec.extra_hosts.is_empty() {
                 None
             } else {
                 Some(spec.extra_hosts.clone())
             },
-            nano_cpus: resources.nano_cpus,
-            memory: resources.memory,
+            nano_cpus: spec.cpu_limit.map(|c| (c * 1_000_000_000.0) as i64),
+            memory: spec.memory_limit.map(|m| m as i64),
             ..Default::default()
         };
 
         let env_strings: Vec<String> = spec.env_vars.clone();
         let env_refs: Vec<&str> = env_strings.iter().map(|s| s.as_str()).collect();
 
+        let labels: HashMap<&str, &str> = spec
+            .labels
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
         let config = bollard::container::Config {
             image: Some(spec.image.as_str()),
             env: Some(env_refs),
             host_config: Some(host_config),
-            // Keep the container running while we exec into it.
             cmd: Some(vec!["sleep", "infinity"]),
             working_dir: Some(spec.workdir.as_str()),
+            labels: if labels.is_empty() { None } else { Some(labels) },
             ..Default::default()
         };
 
@@ -269,7 +326,6 @@ impl ContainerBackend for DockerBackend {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "/".to_string());
 
-        // Ensure parent directory exists.
         self.exec_command(
             id,
             &["mkdir".into(), "-p".into(), parent_dir.clone()],
@@ -277,7 +333,6 @@ impl ContainerBackend for DockerBackend {
         )
         .await?;
 
-        // Build an in-memory tar archive containing one file.
         let mut tar_bytes = Vec::new();
         {
             let mut ar = tar::Builder::new(&mut tar_bytes);
@@ -290,7 +345,6 @@ impl ContainerBackend for DockerBackend {
             ar.finish().map_err(|e| ContainerError::Tar(e.to_string()))?;
         }
 
-        // Upload the tar to the parent directory inside the container.
         let upload_dir = format!("{}/", parent_dir.trim_end_matches('/'));
         self.client
             .upload_to_container(
@@ -331,11 +385,7 @@ impl ContainerBackend for DockerBackend {
             .await?
             .id;
 
-        // Put host terminal into raw mode so keystrokes are forwarded correctly.
-        // The guard restores normal mode on drop, including on panic.
         let _raw_guard = RawModeGuard::enable()?;
-
-        // Capture host terminal dimensions before entering raw mode output loop.
         let term_size = crossterm::terminal::size().ok();
 
         match self
@@ -354,7 +404,6 @@ impl ContainerBackend for DockerBackend {
                 mut output,
                 mut input,
             } => {
-                // Sync the container PTY size to the host terminal immediately.
                 if let Some((cols, rows)) = term_size {
                     let _ = self
                         .client
@@ -368,13 +417,11 @@ impl ContainerBackend for DockerBackend {
                         .await;
                 }
 
-                // Forward stdin from the host to the container in a background task.
                 let stdin_task = tokio::spawn(async move {
                     let mut stdin = tokio::io::stdin();
                     let _ = tokio::io::copy(&mut stdin, &mut input).await;
                 });
 
-                // Forward container output to host stdout.
                 while let Some(chunk) = output.next().await {
                     match chunk? {
                         bollard::container::LogOutput::Console { message }
@@ -400,7 +447,7 @@ impl ContainerBackend for DockerBackend {
         self.client
             .stop_container(&id.0, Some(StopContainerOptions { t: 5 }))
             .await
-            .ok(); // best-effort
+            .ok();
         Ok(())
     }
 
@@ -414,7 +461,7 @@ impl ContainerBackend for DockerBackend {
                 }),
             )
             .await
-            .ok(); // best-effort
+            .ok();
         Ok(())
     }
 
@@ -427,7 +474,6 @@ impl ContainerBackend for DockerBackend {
         id: &ContainerId,
         image_name: &str,
     ) -> Result<(), ContainerError> {
-        // Split "name:tag" for the bollard API.
         let (repo, tag) = image_name
             .split_once(':')
             .unwrap_or((image_name, "latest"));
@@ -444,7 +490,109 @@ impl ContainerBackend for DockerBackend {
             .await?;
         Ok(())
     }
+
+    async fn container_status(&self, name: &str) -> Option<ContainerStatus> {
+        let info = self.client.inspect_container(name, None).await.ok()?;
+        let state_str = info.state?.status?.to_string();
+        if state_str == "running" {
+            Some(ContainerStatus::Running)
+        } else {
+            Some(ContainerStatus::Stopped)
+        }
+    }
+
+    async fn create_volume(&self, name: &str) -> Result<(), ContainerError> {
+        self.client
+            .create_volume(CreateVolumeOptions {
+                name: name.to_string(),
+                ..Default::default()
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn volume_exists(&self, name: &str) -> bool {
+        self.client.inspect_volume(name).await.is_ok()
+    }
+
+    async fn remove_volume(&self, name: &str) -> Result<(), ContainerError> {
+        self.client
+            .remove_volume(name, None::<RemoveVolumeOptions>)
+            .await
+            .ok();
+        Ok(())
+    }
+
+    async fn get_container_labels(
+        &self,
+        id: &ContainerId,
+    ) -> Result<HashMap<String, String>, ContainerError> {
+        let info = self
+            .client
+            .inspect_container(&id.0, None)
+            .await
+            .map_err(|_| ContainerError::BoxNotFound(id.0.clone()))?;
+        Ok(info
+            .config
+            .and_then(|c| c.labels)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect())
+    }
+
+    async fn list_boxes(&self) -> Result<Vec<BoxInfo>, ContainerError> {
+        let mut filters = HashMap::new();
+        filters.insert("label", vec!["agentbox.managed=true"]);
+
+        let containers = self
+            .client
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                filters,
+                ..Default::default()
+            }))
+            .await?;
+
+        let mut boxes: Vec<BoxInfo> = containers
+            .into_iter()
+            .filter_map(|c| {
+                let labels = c.labels.unwrap_or_default();
+                let box_name = labels.get("agentbox.box-name")?.to_string();
+                let agent_id = labels
+                    .get("agentbox.agent-id")
+                    .cloned()
+                    .unwrap_or_default();
+                let agent_display_name = labels
+                    .get("agentbox.agent-display-name")
+                    .cloned()
+                    .unwrap_or_else(|| agent_id.clone());
+                let folder = labels.get("agentbox.folder").cloned();
+                let status = c.state.as_deref().map(|s| {
+                    if s == "running" {
+                        ContainerStatus::Running
+                    } else {
+                        ContainerStatus::Stopped
+                    }
+                }).unwrap_or(ContainerStatus::Stopped);
+
+                Some(BoxInfo {
+                    box_name,
+                    agent_id,
+                    agent_display_name,
+                    container_id: c.id.unwrap_or_default(),
+                    status,
+                    folder,
+                })
+            })
+            .collect();
+
+        boxes.sort_by(|a, b| a.box_name.cmp(&b.box_name));
+        Ok(boxes)
+    }
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// RAII guard that puts the terminal into raw mode and restores it on drop.
 struct RawModeGuard;

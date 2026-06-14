@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BoxConfig {
     pub agent: AgentId,
+    /// Box name — required when `lifecycle: persistent`, ignored for ephemeral.
+    #[serde(default)]
+    pub name: Option<String>,
     pub folder: FolderConfig,
     #[serde(default)]
     pub lifecycle: Lifecycle,
@@ -109,8 +112,8 @@ pub fn parse_config(path: &Path) -> Result<BoxConfig, ConfigError> {
 pub fn validate_config(cfg: &BoxConfig) -> Result<(), ConfigError> {
     let mut errors: Vec<String> = Vec::new();
 
-    if cfg.lifecycle != Lifecycle::Ephemeral {
-        errors.push("lifecycle: only `ephemeral` is supported in Phase 1".into());
+    if cfg.lifecycle == Lifecycle::Persistent && cfg.name.is_none() {
+        errors.push("name is required when lifecycle is `persistent`".into());
     }
     if cfg.folder.sync != SyncMode::Mount {
         errors.push("folder.sync: only `mount` is supported in Phase 1".into());
