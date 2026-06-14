@@ -23,7 +23,11 @@ Three frontends share the same engine: **CLI** (scriptable, CI-friendly), **TUI*
 13. [OAuth (Subscription Auth)](#13-oauth-subscription-auth)
 14. [Daemon Mode](#14-daemon-mode)
 15. [Container and Image Management](#15-container-and-image-management)
-16. [Troubleshooting](#16-troubleshooting)
+16. [Container Backend (Docker / Podman / microVM)](#16-container-backend-docker--podman--microvm)
+17. [Profiles (Presets)](#17-profiles-presets)
+18. [Manifest Management](#18-manifest-management)
+19. [Logging & Diagnostics](#19-logging--diagnostics)
+20. [Troubleshooting](#20-troubleshooting)
 
 ---
 
@@ -128,6 +132,12 @@ agentbox images rm <agent-id>   Delete a specific cache image
 agentbox images prune           Delete all cache images
 agentbox agents                 List all available agents (manifests + built-ins)
 agentbox attach <box-name>      Reconnect to a stopped/running persistent box
+agentbox profile list           List saved profiles
+agentbox profile run <name> <folder>  Launch a box from a saved profile
+agentbox profile rm <name>      Delete a saved profile
+agentbox manifest list          List all manifests (bundled + user-installed)
+agentbox manifest add <source>  Install a manifest from a URL or local file
+agentbox manifest rm <id>       Remove a user-installed manifest
 ```
 
 ### Examples
@@ -959,7 +969,191 @@ agentbox images prune
 
 ---
 
-## 16. Troubleshooting
+## 16. Container Backend (Docker / Podman / microVM)
+
+By default agentbox auto-detects the container backend: it checks `DOCKER_HOST`, then `/var/run/docker.sock`, then the Podman user socket. You can pin a specific backend in `box.yaml`:
+
+```yaml
+# box.yaml
+backend: docker    # force Docker socket
+backend: podman    # force Podman socket
+backend: auto      # default — detect Docker first, then Podman
+backend: microvm   # placeholder; returns an error until implemented
+```
+
+### Using Podman
+
+Podman's Docker-compatible socket is supported via its REST API. To start the socket:
+
+```bash
+# Linux (systemd user session)
+systemctl --user enable --now podman.socket
+
+# Verify:
+podman info
+ls -la "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+```
+
+Set `backend: podman` in your `box.yaml`, or set `DOCKER_HOST` to the socket path and use `backend: auto`:
+
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+agentbox up --config box.yaml
+```
+
+### Auto-detection order
+
+| Priority | Condition | Backend chosen |
+|---|---|---|
+| 1 | `DOCKER_HOST` env var is set | Connect to that URI |
+| 2 | `/var/run/docker.sock` exists | Docker |
+| 3 | `$XDG_RUNTIME_DIR/podman/podman.sock` exists | Podman |
+| — | None of the above | Error |
+
+---
+
+## 17. Profiles (Presets)
+
+A **profile** saves a `provider` + `agent` + `network` + `resources` + `extra_env` combination you want to reuse. Profiles are stored in `~/.config/agentbox/profiles/`.
+
+### Save a profile
+
+Create a file `~/.config/agentbox/profiles/my-profile.yaml`:
+
+```yaml
+name: my-profile
+agent: claude-code
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: ${env:ANTHROPIC_API_KEY}
+network: open
+lifecycle: ephemeral
+```
+
+### Use a profile
+
+```bash
+# Launch a box from the profile for a specific folder
+agentbox profile run my-profile ./my-project
+
+# With a custom box name (required for persistent lifecycle)
+agentbox profile run my-profile ./my-project --name my-box
+
+# Override lifecycle at invocation time
+agentbox profile run my-profile ./my-project --lifecycle persistent --name my-box
+```
+
+### List and manage profiles
+
+```bash
+agentbox profile list            # table of all saved profiles
+agentbox profile show my-profile # YAML dump of a single profile
+agentbox profile rm my-profile   # delete a profile
+```
+
+---
+
+## 18. Manifest Management
+
+Agent manifests describe how to install and run an agent inside the container. Agentbox ships bundled manifests for Claude Code, OpenCode, Pi, Codex, and Hermes. You can also install community manifests from URLs or local files.
+
+### List available agents/manifests
+
+```bash
+agentbox agents                  # lists all available agents
+agentbox manifest list           # lists bundled + user-installed manifests with source
+```
+
+### Add a manifest
+
+```bash
+# From a URL (downloaded and saved to ~/.config/agentbox/manifests/)
+agentbox manifest add https://example.com/my-agent.yaml
+
+# From a local file
+agentbox manifest add /path/to/my-agent.yaml
+
+# Overwrite if a manifest with the same id already exists
+agentbox manifest add --force https://example.com/my-agent.yaml
+```
+
+User-installed manifests take priority over bundled manifests with the same `id`. This lets you override a bundled manifest without modifying the agentbox binary.
+
+### Remove a user-installed manifest
+
+```bash
+agentbox manifest rm my-agent-id
+```
+
+This only removes the user-installed copy. If a bundled manifest with the same `id` exists, it becomes active again.
+
+### Writing a manifest
+
+See `agentbox-spec.md §8` for the full schema. A minimal session-mode manifest:
+
+```yaml
+id: my-agent
+display_name: My Agent
+mode: session
+base_image: node:22-slim
+install:
+  method: npm
+  packages:
+    - my-agent-npm-package
+launch:
+  command: [my-agent]
+supported_providers: [anthropic, openai]
+auth_env: MY_AGENT_API_KEY
+config_file:
+  path: /root/.my-agent/config.json
+  template: |
+    {
+      "api_key": "{{MY_AGENT_API_KEY}}",
+      "model": "{{MODEL}}"
+    }
+```
+
+---
+
+## 19. Logging & Diagnostics
+
+### Structured logs
+
+Agentbox uses structured logging via the `tracing` crate. Set `RUST_LOG` to control verbosity:
+
+```bash
+# Show info-level logs from agentbox crates
+RUST_LOG=agentbox=info agentbox up --config box.yaml
+
+# Full debug output (very verbose)
+RUST_LOG=debug agentbox up --config box.yaml
+
+# Only warnings (the default)
+agentbox up --config box.yaml
+```
+
+The CLI writes logs to **stderr**. The TUI writes logs to **`/tmp/agentbox-tui.log`** to avoid corrupting the terminal UI.
+
+```bash
+# Follow TUI logs while the TUI is running
+tail -f /tmp/agentbox-tui.log
+```
+
+### Crash reports
+
+If agentbox crashes (Rust panic), a crash report is written to:
+
+```
+/tmp/agentbox-crash-<unix-timestamp>.txt
+```
+
+The file contains the panic message and a full stack backtrace. Include this file when filing a bug report at <https://github.com/fkeil/agentbox/issues>.
+
+---
+
+## 20. Troubleshooting
 
 ### Docker not running
 
