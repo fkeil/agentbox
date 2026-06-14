@@ -4,4 +4,6 @@ pub mod down;
 pub mod images;
 pub mod kill;
 pub mod list;
+pub mod manifest_cmd;
+pub mod profile;
 pub mod up;

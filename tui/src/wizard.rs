@@ -622,6 +622,7 @@ impl App {
             network: NetworkMode::Open,
             resources: ResourceConfig { cpus: None, memory: None },
             extra_env: HashMap::new(),
+            backend: agentbox_core::config::BackendChoice::Auto,
         }
     }
 

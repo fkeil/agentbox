@@ -24,6 +24,24 @@ pub struct BoxConfig {
     /// and also bare literal strings.
     #[serde(default)]
     pub extra_env: HashMap<String, String>,
+    /// Container backend to use. `auto` (default) tries Docker then Podman.
+    #[serde(default)]
+    pub backend: BackendChoice,
+}
+
+/// Which container backend (or isolation layer) to use.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendChoice {
+    /// Detect Docker first, then Podman (default).
+    #[default]
+    Auto,
+    /// Force Docker socket (`/var/run/docker.sock` or `DOCKER_HOST`).
+    Docker,
+    /// Force Podman socket (`$XDG_RUNTIME_DIR/podman/podman.sock`).
+    Podman,
+    /// microVM isolation (firecracker/QEMU) — future; currently returns an error.
+    Microvm,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -234,5 +252,55 @@ lifecycle: persistent
             panic!("expected Validation error");
         };
         assert!(msgs.iter().any(|m| m.contains("name is required")));
+    }
+
+    #[test]
+    fn backend_choice_defaults_to_auto() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.backend, BackendChoice::Auto);
+    }
+
+    #[test]
+    fn backend_choice_podman_parses() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+backend: podman
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.backend, BackendChoice::Podman);
+    }
+
+    #[test]
+    fn backend_choice_microvm_parses() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+backend: microvm
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.backend, BackendChoice::Microvm);
     }
 }

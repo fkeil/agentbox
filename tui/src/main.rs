@@ -4,6 +4,24 @@ use agentbox_core::engine;
 
 #[tokio::main]
 async fn main() {
+    // Structured logging — file-based to avoid corrupting the terminal UI.
+    // RUST_LOG controls verbosity; output goes to /tmp/agentbox-tui.log.
+    if let Ok(log_file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/agentbox-tui.log")
+    {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            )
+            .with_writer(std::sync::Mutex::new(log_file))
+            .without_time()
+            .compact()
+            .init();
+    }
+
     let result = match tokio::task::spawn_blocking(wizard::run).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {

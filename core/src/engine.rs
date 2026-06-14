@@ -66,7 +66,10 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
 /// Run a box from a pre-parsed config. Called by the TUI after the wizard
 /// collects settings.
 pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Result<(), EngineError> {
-    let agent = agents::find_agent(&cfg.agent.0, manifests_dir)
+    // Find agent: user manifest store → bundled manifests dir → built-ins.
+    let agent = crate::manifest_store::find_manifest_with_user_store(manifests_dir, &cfg.agent.0)
+        .map(|m| Box::new(crate::agents::manifest_agent::ManifestAgentDef::new(m)) as Box<dyn crate::agents::AgentDef>)
+        .or_else(|| agents::find_agent(&cfg.agent.0, manifests_dir))
         .ok_or_else(|| EngineError::UnknownAgent(cfg.agent.0.clone()))?;
 
     provider::check_provider_compat(
@@ -85,7 +88,8 @@ pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Res
     let resolved_secret =
         tokio::task::spawn_blocking(move || crate::auth::resolve_auth(&auth_ref)).await??;
 
-    let docker = DockerBackend::connect()?;
+    let docker = DockerBackend::connect_with_backend(&cfg.backend)?;
+    tracing::info!(backend = docker.backend_name, agent = %cfg.agent.0, "starting box");
 
     // OAuth: validate + prepare credential-cache volume.
     let oauth_volume: Option<(String, String)> = if cfg.provider.auth == "oauth" {
@@ -896,13 +900,16 @@ async fn install_and_cache(
     use_cache: bool,
 ) -> Result<(), EngineError> {
     if use_cache {
+        tracing::info!(agent = agent.id(), "using cached install image");
         eprintln!("Using cached {} image.", agent.id());
     } else {
+        tracing::info!(agent = agent.id(), "installing agent");
         eprint!("Installing {}... ", agent.id());
         let result = docker
             .exec_command(id, &agent.install_command(), &[])
             .await?;
         if result.exit_code != 0 {
+            tracing::error!(agent = agent.id(), exit_code = result.exit_code, "install failed");
             eprintln!("failed.");
             return Err(EngineError::Container(ContainerError::InstallFailed {
                 code: result.exit_code,
@@ -910,10 +917,14 @@ async fn install_and_cache(
             }));
         }
         eprintln!("done.");
+        tracing::debug!(agent = agent.id(), cache_image, "committing cache image");
         eprint!("Caching image... ");
         match docker.commit_container(id, cache_image).await {
             Ok(()) => eprintln!("done."),
-            Err(e) => eprintln!("warning: could not cache image: {e}"),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not cache agent install image");
+                eprintln!("warning: could not cache image: {e}");
+            }
         }
     }
     Ok(())
@@ -1158,6 +1169,11 @@ impl Drop for CleanupGuard<'_> {
             });
         });
     }
+}
+
+/// Public wrapper so the CLI manifest command can find the bundled manifests dir.
+pub fn find_manifests_dir_pub() -> Option<std::path::PathBuf> {
+    find_manifests_near_exe()
 }
 
 /// Walk up from the running executable looking for a `manifests/` directory.

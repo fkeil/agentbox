@@ -16,6 +16,9 @@ tar = "0.4"
 crossterm = "0.28"
 async-trait = "0.1"
 similar = "2"
+tracing = "0.1"
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

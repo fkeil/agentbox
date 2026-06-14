@@ -97,6 +97,8 @@ pub enum ContainerError {
     Io(#[from] std::io::Error),
     #[error("box `{0}` not found")]
     BoxNotFound(String),
+    #[error("microVM backend is not yet implemented; use backend: docker or backend: podman")]
+    MicroVmNotSupported,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -172,18 +174,75 @@ pub trait ContainerBackend: Send + Sync {
     ) -> Result<Vec<u8>, ContainerError>;
 }
 
-// ── Docker implementation ─────────────────────────────────────────────────────
+// ── Docker / Podman implementation ───────────────────────────────────────────
 
 pub struct DockerBackend {
     client: bollard::Docker,
+    /// Human-readable name of the backend in use (for error messages).
+    pub backend_name: &'static str,
 }
 
 impl DockerBackend {
+    /// Connect using the default Docker socket or `DOCKER_HOST`.
     pub fn connect() -> Result<Self, ContainerError> {
-        let client =
-            bollard::Docker::connect_with_local_defaults().map_err(ContainerError::Connect)?;
-        Ok(Self { client })
+        Self::connect_with_backend(&crate::config::BackendChoice::Auto)
     }
+
+    /// Connect using a specific backend choice from `box.yaml`.
+    pub fn connect_with_backend(
+        choice: &crate::config::BackendChoice,
+    ) -> Result<Self, ContainerError> {
+        use crate::config::BackendChoice;
+        match choice {
+            BackendChoice::Docker => {
+                tracing::debug!("connecting to Docker socket");
+                let client = bollard::Docker::connect_with_local_defaults()
+                    .map_err(ContainerError::Connect)?;
+                Ok(Self { client, backend_name: "docker" })
+            }
+            BackendChoice::Podman => {
+                let socket = podman_socket_path();
+                tracing::debug!("connecting to Podman socket: {socket}");
+                let client = bollard::Docker::connect_with_unix(
+                    &socket,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+                .map_err(ContainerError::Connect)?;
+                Ok(Self { client, backend_name: "podman" })
+            }
+            BackendChoice::Auto => {
+                // Try DOCKER_HOST / default Docker socket first, then Podman.
+                if std::env::var("DOCKER_HOST").is_ok() {
+                    tracing::debug!("DOCKER_HOST set — using Docker backend");
+                    return Self::connect_with_backend(&BackendChoice::Docker);
+                }
+                if std::path::Path::new("/var/run/docker.sock").exists() {
+                    tracing::debug!("found /var/run/docker.sock — using Docker backend");
+                    return Self::connect_with_backend(&BackendChoice::Docker);
+                }
+                let podman = podman_socket_path();
+                if std::path::Path::new(&podman).exists() {
+                    tracing::debug!("found Podman socket {podman} — using Podman backend");
+                    return Self::connect_with_backend(&BackendChoice::Podman);
+                }
+                // Fall back to Docker defaults (will produce a clear error at first API call).
+                tracing::debug!("no socket found; attempting Docker defaults");
+                Self::connect_with_backend(&BackendChoice::Docker)
+            }
+            BackendChoice::Microvm => Err(ContainerError::MicroVmNotSupported),
+        }
+    }
+}
+
+/// Return the Podman user socket path following the XDG convention.
+fn podman_socket_path() -> String {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        return format!("{dir}/podman/podman.sock");
+    }
+    // Fallback: /run/user/<uid>/podman/podman.sock
+    let uid = unsafe { libc::getuid() };
+    format!("/run/user/{uid}/podman/podman.sock")
 }
 
 #[async_trait]

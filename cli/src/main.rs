@@ -26,16 +26,19 @@ enum Command {
     Images(commands::images::ImagesArgs),
     /// List available agents (manifests + built-ins)
     Agents(commands::agents::AgentsArgs),
+    /// Manage saved provider + agent profiles (presets)
+    Profile(commands::profile::ProfileArgs),
+    /// Manage user-installed agent manifests
+    Manifest(commands::manifest_cmd::ManifestArgs),
 }
 
 fn print_banner() {
-    // ANSI colors: cyan = \x1b[36m, dim = \x1b[2m, bold = \x1b[1m, reset = \x1b[0m
-    const C: &str = "\x1b[36m";   // cyan — box/robot structure
-    const D: &str = "\x1b[2;37m"; // dim white — decorative / dim parts
-    const B: &str = "\x1b[1;36m"; // bold cyan — wordmark
-    const W: &str = "\x1b[37m";   // white — tagline
-    const E: &str = "\x1b[1;97m"; // bright bold — eyes
-    const R: &str = "\x1b[0m";    // reset
+    const C: &str = "\x1b[36m";
+    const D: &str = "\x1b[2;37m";
+    const B: &str = "\x1b[1;36m";
+    const W: &str = "\x1b[37m";
+    const E: &str = "\x1b[1;97m";
+    const R: &str = "\x1b[0m";
 
     println!();
     println!("       {C}·:·:·{R}");
@@ -50,12 +53,44 @@ fn print_banner() {
     println!();
 }
 
+fn install_crash_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        // Write a crash report to /tmp.
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let path = format!("/tmp/agentbox-crash-{ts}.txt");
+        let report = format!(
+            "agentbox crash report\ntime: {ts}\n\n{info}\n\nbacktrace:\n{:?}\n",
+            std::backtrace::Backtrace::capture()
+        );
+        if std::fs::write(&path, &report).is_ok() {
+            eprintln!("\nagentbox crashed. Report written to: {path}");
+            eprintln!("Please file an issue at https://github.com/fkeil/agentbox/issues");
+        }
+        eprintln!("{info}");
+    }));
+}
+
 #[tokio::main]
 async fn main() {
-    // Show banner when invoked with no subcommand (help screen) or --help/-h
+    // Crash diagnostics: capture panics and write a report file.
+    install_crash_hook();
+
+    // Structured logging: RUST_LOG controls verbosity (e.g. RUST_LOG=agentbox=debug).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .without_time()
+        .compact()
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
-    let show_banner = args.len() == 1
-        || args.iter().any(|a| a == "--help" || a == "-h");
+    let show_banner = args.len() == 1 || args.iter().any(|a| a == "--help" || a == "-h");
     if show_banner {
         print_banner();
     }
@@ -69,6 +104,8 @@ async fn main() {
         Command::Kill(args) => commands::kill::run(args).await,
         Command::Images(args) => commands::images::run(args).await,
         Command::Agents(args) => commands::agents::run(args).await,
+        Command::Profile(args) => commands::profile::run(args).await,
+        Command::Manifest(args) => commands::manifest_cmd::run(args).await,
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");

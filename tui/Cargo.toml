@@ -14,3 +14,4 @@ crossterm = "0.28"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde_json = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
