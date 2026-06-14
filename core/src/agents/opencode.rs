@@ -18,8 +18,10 @@ impl AgentDef for OpenCodeAgent {
         vec![
             "sh".into(),
             "-c".into(),
+            // @ai-sdk/openai-compatible is required by any custom provider using
+            // the openai-compatible adapter — it is not bundled with opencode-ai.
             "apt-get update -qq && apt-get install -y -qq build-essential python3 2>/dev/null; \
-             npm install -g opencode-ai"
+             npm install -g opencode-ai @ai-sdk/openai-compatible"
                 .into(),
         ]
     }
