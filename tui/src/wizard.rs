@@ -193,6 +193,7 @@ enum Screen {
 struct AgentEntry {
     id: String,
     display_name: String,
+    is_daemon: bool,
 }
 
 /// Simple text-input with a char-level cursor.
@@ -404,6 +405,12 @@ const PERSISTENT_ACTIONS: [(BoxAction, &str); 3] = [
     (BoxAction::Remove, "Remove  (delete container + state volume)"),
 ];
 
+const DAEMON_ACTIONS: [(BoxAction, &str); 3] = [
+    (BoxAction::Attach, "Status  (show running state + bound ports)"),
+    (BoxAction::Stop, "Stop    (halt daemon, preserve state)"),
+    (BoxAction::Remove, "Remove  (delete container + state volume)"),
+];
+
 const EPHEMERAL_ACTIONS: [(BoxAction, &str); 1] = [
     (BoxAction::Kill, "Kill    (force-remove orphaned container)"),
 ];
@@ -478,10 +485,14 @@ impl App {
         // Gather available agents
         let manifest_agents: Vec<AgentEntry> = manifests_dir
             .as_deref()
-            .map(manifest::list_manifests)
+            .map(manifest::list_manifests_meta)
             .unwrap_or_default()
             .into_iter()
-            .map(|(id, display_name)| AgentEntry { id, display_name })
+            .map(|m| AgentEntry {
+                id: m.id,
+                display_name: m.display_name,
+                is_daemon: m.is_daemon,
+            })
             .collect();
         let manifest_ids: std::collections::HashSet<&str> =
             manifest_agents.iter().map(|a| a.id.as_str()).collect();
@@ -491,6 +502,7 @@ impl App {
             .map(|(id, name)| AgentEntry {
                 id: id.to_string(),
                 display_name: name.to_string(),
+                is_daemon: false,
             })
             .collect();
         let agents: Vec<AgentEntry> = manifest_agents.into_iter().chain(builtins).collect();
@@ -564,6 +576,10 @@ impl App {
 
     fn selected_agent_id(&self) -> &str {
         self.agents.get(self.agent_idx).map(|a| a.id.as_str()).unwrap_or("")
+    }
+
+    fn selected_agent_is_daemon(&self) -> bool {
+        self.agents.get(self.agent_idx).map(|a| a.is_daemon).unwrap_or(false)
     }
 
     fn is_pi(&self) -> bool {
@@ -651,9 +667,14 @@ impl App {
     }
 
     fn detail_actions(&self) -> &[(BoxAction, &'static str)] {
-        let lifecycle = self.detail_box.as_ref().map(|b| b.lifecycle.as_str()).unwrap_or("persistent");
-        if lifecycle == "ephemeral" {
+        let b = match self.detail_box.as_ref() {
+            Some(b) => b,
+            None => return &PERSISTENT_ACTIONS,
+        };
+        if b.lifecycle == "ephemeral" {
             &EPHEMERAL_ACTIONS
+        } else if b.is_daemon {
+            &DAEMON_ACTIONS
         } else {
             &PERSISTENT_ACTIONS
         }
@@ -932,6 +953,10 @@ fn handle_folder(app: &mut App, key: KeyEvent) -> Action {
         }
         KeyCode::Enter if app.folder_focus == 1 => {
             let path = PathBuf::from(app.folder.value());
+            // Daemon agents require persistent lifecycle.
+            if app.selected_agent_is_daemon() {
+                app.lifecycle_idx = 1;
+            }
             // Pre-fill box name suggestion
             if app.box_name.value().is_empty() {
                 let agent_id = app.selected_agent_id().to_string();
@@ -960,14 +985,15 @@ fn handle_folder(app: &mut App, key: KeyEvent) -> Action {
 // ── Wizard: lifecycle ─────────────────────────────────────────────────────────
 
 fn handle_lifecycle(app: &mut App, key: KeyEvent) -> Action {
+    let daemon_locked = app.selected_agent_is_daemon();
     match key.code {
         KeyCode::Esc => {
             app.screen = Screen::WizardFolder;
         }
-        KeyCode::Left if app.lifecycle_idx > 0 && app.prov_focus == 0 => {
+        KeyCode::Left if app.lifecycle_idx > 0 && app.prov_focus == 0 && !daemon_locked => {
             app.lifecycle_idx -= 1;
         }
-        KeyCode::Right if app.lifecycle_idx < 1 && app.prov_focus == 0 => {
+        KeyCode::Right if app.lifecycle_idx < 1 && app.prov_focus == 0 && !daemon_locked => {
             app.lifecycle_idx += 1;
         }
         KeyCode::Tab => {
@@ -1455,6 +1481,7 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
+    let daemon_locked = app.selected_agent_is_daemon();
     let show_name = app.is_persistent();
     let chunks = Layout::vertical([
         Constraint::Length(3),
@@ -1464,19 +1491,28 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
     .split(area);
 
     let labels = ["ephemeral", "persistent"];
-    let left = if app.lifecycle_idx > 0 { "◀ " } else { "  " };
-    let right = if app.lifecycle_idx < 1 { " ▶" } else { "  " };
+    let (left, right) = if daemon_locked {
+        ("  ", "  ")
+    } else {
+        (
+            if app.lifecycle_idx > 0 { "◀ " } else { "  " },
+            if app.lifecycle_idx < 1 { " ▶" } else { "  " },
+        )
+    };
     let focused_type = app.prov_focus == 0;
     let border_style = if focused_type {
         Style::default().fg(t.border_focused)
     } else {
         Style::default().fg(t.border)
     };
-    let desc = if app.is_persistent() {
+    let desc = if daemon_locked {
+        "Locked — daemon agents always run as persistent named boxes"
+    } else if app.is_persistent() {
         "Named box — survives sessions, retains history and credentials"
     } else {
         "Fresh container every run, removed on exit"
     };
+    let title = if daemon_locked { "Lifecycle  (locked)" } else { "Lifecycle  (← →)" };
     let type_text = Line::from(vec![
         Span::styled(left, Style::default().fg(t.text_dim)),
         Span::styled(labels[app.lifecycle_idx], Style::default().fg(t.text).bold()),
@@ -1485,7 +1521,7 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
     ]);
     let type_widget = Paragraph::new(type_text).block(
         Block::default()
-            .title("Lifecycle  (← →)")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(border_style),
     );
