@@ -155,8 +155,10 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
 
     // --- 13. Launch agent interactively ---
     eprintln!("Launching {}...", agent.id());
+    let mut launch_cmd = agent.launch_command();
+    launch_cmd.extend(agent.launch_args(&cfg.provider));
     let exit_code = docker
-        .attach_interactive(&container_id, &agent.launch_command(), agent.workdir())
+        .attach_interactive(&container_id, &launch_cmd, agent.workdir())
         .await?;
 
     // cleanup runs here via drop

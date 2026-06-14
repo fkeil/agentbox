@@ -98,6 +98,16 @@ impl AgentDef for OpenCodeAgent {
         vec!["opencode".into()]
     }
 
+    fn launch_args(&self, provider: &ProviderConfig) -> Vec<String> {
+        let key = provider_slug(&provider.name);
+        let model_ref = match &provider.provider_type {
+            ProviderType::OpenaiCompatible => format!("{}/{}", key, provider.model),
+            ProviderType::Openai => format!("openai/{}", provider.model),
+            ProviderType::Anthropic => format!("anthropic/{}", provider.model),
+        };
+        vec!["-m".into(), model_ref]
+    }
+
     fn workdir(&self) -> &str {
         "/workspace"
     }

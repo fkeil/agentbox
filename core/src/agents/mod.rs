@@ -34,6 +34,12 @@ pub trait AgentDef: Send + Sync {
         resolved_key: Option<&str>,
     ) -> Result<Vec<u8>, AgentError>;
     fn launch_command(&self) -> Vec<String>;
+    /// Additional args appended to launch_command at runtime, given the provider.
+    /// Use this for provider-specific flags (e.g. model selection) that are only
+    /// known at run time. Default: no extra args.
+    fn launch_args(&self, _provider: &ProviderConfig) -> Vec<String> {
+        vec![]
+    }
     /// In-container path where the user folder is bind-mounted.
     fn workdir(&self) -> &str;
     /// Extra env vars the agent always needs beyond auth injection.
