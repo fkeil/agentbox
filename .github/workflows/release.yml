@@ -6,6 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-cli-tui:
@@ -33,7 +34,7 @@ jobs:
             artifact: windows-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -79,7 +80,7 @@ jobs:
             artifact: gui-windows
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
@@ -120,7 +121,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
