@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bollard::container::{
     CreateContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
-use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, Mount, MountTypeEnum, Resources};
 use futures_util::StreamExt;
@@ -332,6 +332,9 @@ impl ContainerBackend for DockerBackend {
         // The guard restores normal mode on drop, including on panic.
         let _raw_guard = RawModeGuard::enable()?;
 
+        // Capture host terminal dimensions before entering raw mode output loop.
+        let term_size = crossterm::terminal::size().ok();
+
         match self
             .client
             .start_exec(
@@ -348,6 +351,20 @@ impl ContainerBackend for DockerBackend {
                 mut output,
                 mut input,
             } => {
+                // Sync the container PTY size to the host terminal immediately.
+                if let Some((cols, rows)) = term_size {
+                    let _ = self
+                        .client
+                        .resize_exec(
+                            &exec_id,
+                            ResizeExecOptions {
+                                height: rows,
+                                width: cols,
+                            },
+                        )
+                        .await;
+                }
+
                 // Forward stdin from the host to the container in a background task.
                 let stdin_task = tokio::spawn(async move {
                     let mut stdin = tokio::io::stdin();
