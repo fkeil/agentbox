@@ -1,5 +1,5 @@
 use agentbox_core::{add_manifest, list_user_manifests, remove_manifest};
-use agentbox_core::manifest::list_manifest_ids;
+use agentbox_core::manifest::list_manifests;
 use clap::{Args, Subcommand};
 
 #[derive(Args)]
@@ -38,26 +38,30 @@ pub async fn run(args: ManifestArgs) -> anyhow::Result<()> {
 fn run_list() -> anyhow::Result<()> {
     // Bundled manifests (near executable).
     let bundled_dir = agentbox_core::engine::find_manifests_dir_pub();
-    let bundled_ids: Vec<String> = bundled_dir
+    let bundled: Vec<(String, String)> = bundled_dir
         .as_deref()
-        .map(list_manifest_ids)
+        .map(list_manifests)
         .unwrap_or_default();
 
     // User-installed manifests.
     let user = list_user_manifests();
 
+    if bundled.is_empty() && user.is_empty() {
+        println!("(no manifests found)");
+        return Ok(());
+    }
+
     println!("{:<20} {:<28} SOURCE", "ID", "DISPLAY NAME");
     println!("{}", "─".repeat(70));
 
-    for id in &bundled_ids {
-        println!("{:<20} {:<28} bundled", id, id);
+    for (id, display_name) in &bundled {
+        println!("{:<20} {:<28} bundled", id, display_name);
     }
     for m in &user {
-        println!("{:<20} {:<28} user (~/.config/agentbox/manifests/)", m.id, m.display_name);
-    }
-
-    if bundled_ids.is_empty() && user.is_empty() {
-        println!("(none found)");
+        println!(
+            "{:<20} {:<28} user (~/.config/agentbox/manifests/)",
+            m.id, m.display_name
+        );
     }
     Ok(())
 }
