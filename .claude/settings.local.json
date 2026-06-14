@@ -19,7 +19,16 @@
       "Bash(cargo build *)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:opencode.ai)"
+      "WebFetch(domain:opencode.ai)",
+      "Bash(pkg-config --exists webkit2gtk-4.1)",
+      "Bash(pkg-config --exists webkit2gtk-4.0)",
+      "Bash(dpkg -l)",
+      "Bash(identify --version)",
+      "Bash(python3 -c \"import cairosvg; print\\('cairosvg ok'\\)\")",
+      "Bash(python3 -c \"from PIL import Image; print\\('PIL ok'\\)\")",
+      "Bash(cargo tauri *)",
+      "Bash(pip install *)",
+      "Bash(python3 *)"
     ]
   }
 }

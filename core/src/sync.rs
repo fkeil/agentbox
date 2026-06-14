@@ -120,16 +120,22 @@ pub fn snapshot_host_meta(dir: &Path) -> HashMap<String, FileMeta> {
 }
 
 fn snapshot_meta_recursive(root: &Path, dir: &Path, out: &mut HashMap<String, FileMeta>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         let rel = path
             .strip_prefix(root)
             .unwrap_or(&path)
             .to_string_lossy()
             .to_string();
-        if rel.starts_with(".git") { continue }
+        if rel.starts_with(".git") {
+            continue;
+        }
         if meta.is_dir() {
             snapshot_meta_recursive(root, &path, out);
         } else {
@@ -197,7 +203,13 @@ pub fn diff_path_for(host_dir: &Path) -> std::path::PathBuf {
     let slug: String = host_dir
         .to_string_lossy()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .to_lowercase()
         .chars()
@@ -232,7 +244,10 @@ fn parse_tar_to_map(tar_bytes: &[u8]) -> Result<HashMap<String, String>, Contain
     let mut archive = tar::Archive::new(cursor);
     let mut files = HashMap::new();
 
-    for entry in archive.entries().map_err(|e| ContainerError::Tar(e.to_string()))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| ContainerError::Tar(e.to_string()))?
+    {
         let mut entry = entry.map_err(|e| ContainerError::Tar(e.to_string()))?;
 
         if entry.header().entry_type().is_dir() {

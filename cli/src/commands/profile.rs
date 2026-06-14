@@ -56,7 +56,9 @@ fn parse_lifecycle(s: &str) -> Result<Lifecycle, String> {
     match s {
         "ephemeral" => Ok(Lifecycle::Ephemeral),
         "persistent" => Ok(Lifecycle::Persistent),
-        other => Err(format!("unknown lifecycle `{other}`; use ephemeral or persistent")),
+        other => Err(format!(
+            "unknown lifecycle `{other}`; use ephemeral or persistent"
+        )),
     }
 }
 
@@ -93,7 +95,10 @@ fn run_show(name: &str) -> anyhow::Result<()> {
     let p = load_profile(name).map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("Profile: {}", p.name);
     println!("  agent:    {}", p.agent);
-    println!("  provider: {} ({:?})", p.provider.name, p.provider.provider_type);
+    println!(
+        "  provider: {} ({:?})",
+        p.provider.name, p.provider.provider_type
+    );
     println!("  model:    {}", p.provider.model);
     println!("  network:  {:?}", p.network);
     println!("  backend:  {:?}", p.backend);
@@ -126,8 +131,8 @@ async fn run_run(args: ProfileRunArgs) -> anyhow::Result<()> {
 }
 
 fn run_save(args: ProfileSaveArgs) -> anyhow::Result<()> {
-    let cfg = agentbox_core::config::parse_config(&args.from)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let cfg =
+        agentbox_core::config::parse_config(&args.from).map_err(|e| anyhow::anyhow!("{e}"))?;
     let profile = Profile {
         name: args.name.clone(),
         agent: cfg.agent.0,

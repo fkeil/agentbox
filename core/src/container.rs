@@ -198,18 +198,21 @@ impl DockerBackend {
                 tracing::debug!("connecting to Docker socket");
                 let client = bollard::Docker::connect_with_local_defaults()
                     .map_err(ContainerError::Connect)?;
-                Ok(Self { client, backend_name: "docker" })
+                Ok(Self {
+                    client,
+                    backend_name: "docker",
+                })
             }
             BackendChoice::Podman => {
                 let socket = podman_socket_path();
                 tracing::debug!("connecting to Podman socket: {socket}");
-                let client = bollard::Docker::connect_with_unix(
-                    &socket,
-                    120,
-                    bollard::API_DEFAULT_VERSION,
-                )
-                .map_err(ContainerError::Connect)?;
-                Ok(Self { client, backend_name: "podman" })
+                let client =
+                    bollard::Docker::connect_with_unix(&socket, 120, bollard::API_DEFAULT_VERSION)
+                        .map_err(ContainerError::Connect)?;
+                Ok(Self {
+                    client,
+                    backend_name: "podman",
+                })
             }
             BackendChoice::Auto => {
                 // Try DOCKER_HOST / default Docker socket first, then Podman.
@@ -352,7 +355,11 @@ impl ContainerBackend for DockerBackend {
             host_config: Some(host_config),
             cmd: Some(vec!["sleep", "infinity"]),
             working_dir: Some(spec.workdir.as_str()),
-            labels: if labels.is_empty() { None } else { Some(labels) },
+            labels: if labels.is_empty() {
+                None
+            } else {
+                Some(labels)
+            },
             ..Default::default()
         };
 
@@ -452,12 +459,8 @@ impl ContainerBackend for DockerBackend {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "/".to_string());
 
-        self.exec_command(
-            id,
-            &["mkdir".into(), "-p".into(), parent_dir.clone()],
-            &[],
-        )
-        .await?;
+        self.exec_command(id, &["mkdir".into(), "-p".into(), parent_dir.clone()], &[])
+            .await?;
 
         let mut tar_bytes = Vec::new();
         {
@@ -468,7 +471,8 @@ impl ContainerBackend for DockerBackend {
             header.set_cksum();
             ar.append_data(&mut header, &file_name, content)
                 .map_err(|e| ContainerError::Tar(e.to_string()))?;
-            ar.finish().map_err(|e| ContainerError::Tar(e.to_string()))?;
+            ar.finish()
+                .map_err(|e| ContainerError::Tar(e.to_string()))?;
         }
 
         let upload_dir = format!("{}/", parent_dir.trim_end_matches('/'));
@@ -600,9 +604,7 @@ impl ContainerBackend for DockerBackend {
         id: &ContainerId,
         image_name: &str,
     ) -> Result<(), ContainerError> {
-        let (repo, tag) = image_name
-            .split_once(':')
-            .unwrap_or((image_name, "latest"));
+        let (repo, tag) = image_name.split_once(':').unwrap_or((image_name, "latest"));
         self.client
             .commit_container(
                 bollard::image::CommitContainerOptions {
@@ -685,23 +687,24 @@ impl ContainerBackend for DockerBackend {
             .filter_map(|c| {
                 let labels = c.labels.unwrap_or_default();
                 let box_name = labels.get("agentbox.box-name")?.to_string();
-                let agent_id = labels
-                    .get("agentbox.agent-id")
-                    .cloned()
-                    .unwrap_or_default();
+                let agent_id = labels.get("agentbox.agent-id").cloned().unwrap_or_default();
                 let agent_display_name = labels
                     .get("agentbox.agent-display-name")
                     .cloned()
                     .unwrap_or_else(|| agent_id.clone());
                 let folder = labels.get("agentbox.folder").cloned();
                 let project_name = labels.get("agentbox.project-name").cloned();
-                let status = c.state.as_deref().map(|s| {
-                    if s == "running" {
-                        ContainerStatus::Running
-                    } else {
-                        ContainerStatus::Stopped
-                    }
-                }).unwrap_or(ContainerStatus::Stopped);
+                let status = c
+                    .state
+                    .as_deref()
+                    .map(|s| {
+                        if s == "running" {
+                            ContainerStatus::Running
+                        } else {
+                            ContainerStatus::Stopped
+                        }
+                    })
+                    .unwrap_or(ContainerStatus::Stopped);
 
                 let lifecycle = labels
                     .get("agentbox.lifecycle")
@@ -799,7 +802,8 @@ impl ContainerBackend for DockerBackend {
             let mut ar = tar::Builder::new(&mut tar_bytes);
             ar.append_dir_all(".", local_dir)
                 .map_err(|e| ContainerError::Tar(e.to_string()))?;
-            ar.finish().map_err(|e| ContainerError::Tar(e.to_string()))?;
+            ar.finish()
+                .map_err(|e| ContainerError::Tar(e.to_string()))?;
         }
 
         self.exec_command(

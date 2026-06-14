@@ -16,7 +16,9 @@ pub use crate::container::{BoxInfo as BoxSummary, CacheImage};
 pub enum EngineError {
     #[error("{0}")]
     Config(#[from] ConfigError),
-    #[error("unknown agent `{0}`. Built-ins: claude-code, opencode. Or add a manifests/{0}.yaml file.")]
+    #[error(
+        "unknown agent `{0}`. Built-ins: claude-code, opencode. Or add a manifests/{0}.yaml file."
+    )]
     UnknownAgent(String),
     #[error("{0}")]
     Provider(#[from] ProviderError),
@@ -27,13 +29,22 @@ pub enum EngineError {
     #[error("{0}")]
     AgentConfig(#[from] AgentError),
     #[error("cannot resolve folder path `{path}`: {source}")]
-    BadFolderPath { path: PathBuf, source: std::io::Error },
+    BadFolderPath {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("task join error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
-    #[error("agent `{0}` does not support in-container OAuth; use `auth: ${{env:API_KEY_VAR}}` instead")]
+    #[error(
+        "agent `{0}` does not support in-container OAuth; use `auth: ${{env:API_KEY_VAR}}` instead"
+    )]
     OAuthNotSupported(String),
     #[error("healthcheck failed for agent `{agent}` (exit {code}):\n{stderr}")]
-    HealthcheckFailed { agent: String, code: i64, stderr: String },
+    HealthcheckFailed {
+        agent: String,
+        code: i64,
+        stderr: String,
+    },
     #[error("egress allowlist setup failed: {0}")]
     AllowlistSetup(String),
     #[error("daemon agent `{0}` requires `lifecycle: persistent`; set `lifecycle: persistent` and `name: <box-name>` in box.yaml")]
@@ -65,10 +76,16 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
 
 /// Run a box from a pre-parsed config. Called by the TUI after the wizard
 /// collects settings.
-pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Result<(), EngineError> {
+pub async fn run_box_config(
+    cfg: BoxConfig,
+    manifests_dir: Option<&Path>,
+) -> Result<(), EngineError> {
     // Find agent: user manifest store → bundled manifests dir → built-ins.
     let agent = crate::manifest_store::find_manifest_with_user_store(manifests_dir, &cfg.agent.0)
-        .map(|m| Box::new(crate::agents::manifest_agent::ManifestAgentDef::new(m)) as Box<dyn crate::agents::AgentDef>)
+        .map(|m| {
+            Box::new(crate::agents::manifest_agent::ManifestAgentDef::new(m))
+                as Box<dyn crate::agents::AgentDef>
+        })
         .or_else(|| agents::find_agent(&cfg.agent.0, manifests_dir))
         .ok_or_else(|| EngineError::UnknownAgent(cfg.agent.0.clone()))?;
 
@@ -145,7 +162,11 @@ pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Res
 
     let cache_image = format!("agentbox-cache-{}:latest", agent.id());
     let use_cache = docker.image_exists(&cache_image).await;
-    let base_image = if use_cache { cache_image.clone() } else { agent.base_image().to_string() };
+    let base_image = if use_cache {
+        cache_image.clone()
+    } else {
+        agent.base_image().to_string()
+    };
 
     let mut launch_cmd = agent.launch_command();
     launch_cmd.extend(agent.launch_args(&cfg.provider));
@@ -194,7 +215,9 @@ pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Res
     // Daemon agents bypass the normal lifecycle branches.
     if let Some(daemon_cfg) = agent.daemon_config() {
         if cfg.lifecycle != Lifecycle::Persistent {
-            return Err(EngineError::DaemonRequiresPersistent(agent.id().to_string()));
+            return Err(EngineError::DaemonRequiresPersistent(
+                agent.id().to_string(),
+            ));
         }
         return run_daemon(
             &docker,
@@ -266,7 +289,11 @@ pub async fn attach_box(box_name: &str) -> Result<(), EngineError> {
         .map_err(|_| ContainerError::BoxNotFound(box_name.to_string()))?;
 
     // Daemon boxes are not interactive — just report their running status.
-    if labels.get("agentbox.daemon").map(|v| v == "true").unwrap_or(false) {
+    if labels
+        .get("agentbox.daemon")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         let status = docker.container_status(&container_name).await;
         match status {
             Some(ContainerStatus::Running) => {
@@ -307,9 +334,7 @@ pub async fn attach_box(box_name: &str) -> Result<(), EngineError> {
     docker.start_container(&id).await.ok(); // no-op if already running
 
     eprintln!("Attaching to box '{box_name}'...");
-    let exit_code = docker
-        .attach_interactive(&id, &launch_cmd, workdir)
-        .await?;
+    let exit_code = docker.attach_interactive(&id, &launch_cmd, workdir).await?;
 
     docker.stop_container(&id).await.ok();
     eprintln!("Box stopped. State preserved.");
@@ -409,10 +434,12 @@ pub async fn apply_snapshot_diff(
         }
     }
 
-    let diffs = crate::sync::load_diff(host_folder)
-        .ok_or_else(|| EngineError::Container(ContainerError::BoxNotFound(
-            format!("no snapshot diff found for {}", host_folder.display()),
-        )))?;
+    let diffs = crate::sync::load_diff(host_folder).ok_or_else(|| {
+        EngineError::Container(ContainerError::BoxNotFound(format!(
+            "no snapshot diff found for {}",
+            host_folder.display()
+        )))
+    })?;
     crate::sync::apply_approved_changes(host_folder, &diffs, approved_paths)
         .map_err(|e| EngineError::Container(ContainerError::Io(e)))
 }
@@ -456,8 +483,14 @@ async fn run_ephemeral_snapshot(
     labels.insert("agentbox.lifecycle".into(), "ephemeral".into());
     labels.insert("agentbox.box-name".into(), box_slug);
     labels.insert("agentbox.agent-id".into(), agent.id().to_string());
-    labels.insert("agentbox.agent-display-name".into(), agent.display_name().to_string());
-    labels.insert("agentbox.folder".into(), host_folder.to_string_lossy().into_owned());
+    labels.insert(
+        "agentbox.agent-display-name".into(),
+        agent.display_name().to_string(),
+    );
+    labels.insert(
+        "agentbox.folder".into(),
+        host_folder.to_string_lossy().into_owned(),
+    );
     if let Some(pn) = &cfg.project_name {
         labels.insert("agentbox.project-name".into(), pn.clone());
     }
@@ -504,13 +537,9 @@ async fn run_ephemeral_snapshot(
         .await?;
 
     eprintln!("Computing diff...");
-    let diffs = crate::sync::compute_snapshot_diff(
-        docker,
-        &container_id,
-        agent.workdir(),
-        &host_folder,
-    )
-    .await?;
+    let diffs =
+        crate::sync::compute_snapshot_diff(docker, &container_id, agent.workdir(), &host_folder)
+            .await?;
 
     drop(cleanup);
 
@@ -558,8 +587,14 @@ async fn run_ephemeral(
     labels.insert("agentbox.lifecycle".into(), "ephemeral".into());
     labels.insert("agentbox.box-name".into(), box_slug);
     labels.insert("agentbox.agent-id".into(), agent.id().to_string());
-    labels.insert("agentbox.agent-display-name".into(), agent.display_name().to_string());
-    labels.insert("agentbox.folder".into(), host_folder.to_string_lossy().into_owned());
+    labels.insert(
+        "agentbox.agent-display-name".into(),
+        agent.display_name().to_string(),
+    );
+    labels.insert(
+        "agentbox.folder".into(),
+        host_folder.to_string_lossy().into_owned(),
+    );
     if let Some(pn) = &cfg.project_name {
         labels.insert("agentbox.project-name".into(), pn.clone());
     }
@@ -808,7 +843,10 @@ async fn run_daemon(
     labels.insert("agentbox.lifecycle".into(), "persistent".into());
     labels.insert("agentbox.box-name".into(), box_name.to_string());
     labels.insert("agentbox.agent-id".into(), agent.id().to_string());
-    labels.insert("agentbox.agent-display-name".into(), agent.display_name().to_string());
+    labels.insert(
+        "agentbox.agent-display-name".into(),
+        agent.display_name().to_string(),
+    );
     labels.insert("agentbox.workdir".into(), agent.workdir().to_string());
     labels.insert("agentbox.launch-cmd".into(), launch_cmd_json);
     labels.insert("agentbox.folder".into(), host_folder_str);
@@ -869,9 +907,7 @@ async fn run_daemon(
             }
             "config_file" => {
                 // Render the template and write it to the specified path inside the container.
-                if let (Some(path), Some(template)) =
-                    (&setup.config_path, &setup.config_template)
-                {
+                if let (Some(path), Some(template)) = (&setup.config_path, &setup.config_template) {
                     eprint!("Writing daemon config to {path}... ");
                     // Render {{var}} placeholders the same way agent configs are rendered.
                     let rendered = render_daemon_template(template, &final_env_vars);
@@ -910,7 +946,10 @@ async fn run_daemon(
 fn print_daemon_ports(daemon_cfg: &crate::manifest::DaemonConfig) {
     for p in &daemon_cfg.ports {
         let flag = if p.optional { " (optional)" } else { "" };
-        eprintln!("  localhost:{} → container:{}{}", p.host_port, p.container_port, flag);
+        eprintln!(
+            "  localhost:{} → container:{}{}",
+            p.host_port, p.container_port, flag
+        );
     }
 }
 
@@ -948,7 +987,11 @@ async fn install_and_cache(
             .exec_command(id, &agent.install_command(), &[])
             .await?;
         if result.exit_code != 0 {
-            tracing::error!(agent = agent.id(), exit_code = result.exit_code, "install failed");
+            tracing::error!(
+                agent = agent.id(),
+                exit_code = result.exit_code,
+                "install failed"
+            );
             eprintln!("failed.");
             return Err(EngineError::Container(ContainerError::InstallFailed {
                 code: result.exit_code,
@@ -979,7 +1022,11 @@ async fn write_agent_config(
     if let Some(cfg_path) = agent.config_file_path() {
         let cfg_bytes = agent.render_config(
             provider,
-            if provider.auth != "none" { Some(resolved_key) } else { None },
+            if provider.auth != "none" {
+                Some(resolved_key)
+            } else {
+                None
+            },
         )?;
         if !cfg_bytes.is_empty() {
             docker.write_file(id, cfg_path, &cfg_bytes).await?;
@@ -1039,16 +1086,19 @@ async fn apply_egress_allowlist(
     let install_result = docker
         .exec_command(
             id,
-            &["sh".into(), "-c".into(),
-              "apt-get install -y -qq iptables 2>/dev/null || true".into()],
+            &[
+                "sh".into(),
+                "-c".into(),
+                "apt-get install -y -qq iptables 2>/dev/null || true".into(),
+            ],
             &[],
         )
         .await?;
     if install_result.exit_code != 0 {
         let stderr = String::from_utf8_lossy(&install_result.stderr).into_owned();
-        return Err(EngineError::AllowlistSetup(
-            format!("iptables install failed: {stderr}")
-        ));
+        return Err(EngineError::AllowlistSetup(format!(
+            "iptables install failed: {stderr}"
+        )));
     }
 
     // Resolve allowed IPs from provider hostname.
@@ -1065,12 +1115,15 @@ async fn apply_egress_allowlist(
         .await?;
     if result.exit_code != 0 {
         let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
-        return Err(EngineError::AllowlistSetup(
-            format!("iptables rules failed: {stderr}")
-        ));
+        return Err(EngineError::AllowlistSetup(format!(
+            "iptables rules failed: {stderr}"
+        )));
     }
 
-    eprintln!("Egress allowlist active ({} provider IP(s)).", allowed_ips.len());
+    eprintln!(
+        "Egress allowlist active ({} provider IP(s)).",
+        allowed_ips.len()
+    );
     Ok(())
 }
 
@@ -1081,14 +1134,13 @@ fn resolve_provider_ips(cfg: &BoxConfig) -> Vec<String> {
     let hostname = match cfg.provider.provider_type {
         ProviderType::Anthropic => "api.anthropic.com".to_string(),
         ProviderType::Openai => "api.openai.com".to_string(),
-        ProviderType::OpenaiCompatible => {
-            cfg.provider
-                .base_url
-                .as_deref()
-                .and_then(extract_hostname)
-                .unwrap_or_default()
-                .to_string()
-        }
+        ProviderType::OpenaiCompatible => cfg
+            .provider
+            .base_url
+            .as_deref()
+            .and_then(extract_hostname)
+            .unwrap_or_default()
+            .to_string(),
     };
 
     if hostname.is_empty() {
@@ -1096,10 +1148,7 @@ fn resolve_provider_ips(cfg: &BoxConfig) -> Vec<String> {
     }
 
     // Skip resolution for local/private addresses — the Docker network rule already covers them.
-    if hostname == "host.docker.internal"
-        || hostname == "localhost"
-        || hostname == "127.0.0.1"
-    {
+    if hostname == "host.docker.internal" || hostname == "localhost" || hostname == "127.0.0.1" {
         return vec![];
     }
 
@@ -1152,7 +1201,13 @@ fn host_gateway_hosts() -> Vec<String> {
 fn slug_from_path(p: &Path) -> String {
     p.to_string_lossy()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_lowercase()
@@ -1163,10 +1218,7 @@ fn slug_from_path(p: &Path) -> String {
 
 /// Slug from just the last path component (folder name), not the full path.
 fn slug_from_basename(p: &Path) -> String {
-    let name = p
-        .file_name()
-        .map(std::path::Path::new)
-        .unwrap_or(p);
+    let name = p.file_name().map(std::path::Path::new).unwrap_or(p);
     slug_from_path(name)
 }
 

@@ -125,9 +125,7 @@ impl InstallConfig {
             InstallMethod::Script => {
                 let url = self.url.as_deref().unwrap_or("");
                 // Download and pipe to sh. NONINTERACTIVE=1 suppresses prompts.
-                steps.push(format!(
-                    "curl -fsSL '{url}' | NONINTERACTIVE=1 sh"
-                ));
+                steps.push(format!("curl -fsSL '{url}' | NONINTERACTIVE=1 sh"));
             }
             InstallMethod::Binary => {
                 let url = self.url.as_deref().unwrap_or("");
@@ -208,9 +206,15 @@ pub struct LaunchConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
     #[error("cannot read manifest {path}: {source}")]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("YAML parse error in {path}: {source}")]
-    Parse { path: PathBuf, source: serde_yaml::Error },
+    Parse {
+        path: PathBuf,
+        source: serde_yaml::Error,
+    },
 }
 
 /// Validate a loaded manifest. Returns a list of error strings; empty = valid.
@@ -381,18 +385,26 @@ mod tests {
     #[test]
     fn opencode_manifest_renders_openai_compat() {
         let agent = load_real("opencode");
-        let provider = openai_compat_provider("local-ollama", "gemma4:latest", "http://host:11434/v1");
+        let provider =
+            openai_compat_provider("local-ollama", "gemma4:latest", "http://host:11434/v1");
         let bytes = agent.render_config(&provider, None).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["model"], "local-ollama/gemma4:latest");
-        assert_eq!(v["provider"]["local-ollama"]["npm"], "@ai-sdk/openai-compatible");
-        assert_eq!(v["provider"]["local-ollama"]["options"]["baseURL"], "http://host:11434/v1");
+        assert_eq!(
+            v["provider"]["local-ollama"]["npm"],
+            "@ai-sdk/openai-compatible"
+        );
+        assert_eq!(
+            v["provider"]["local-ollama"]["options"]["baseURL"],
+            "http://host:11434/v1"
+        );
     }
 
     #[test]
     fn opencode_manifest_launch_args() {
         let agent = load_real("opencode");
-        let provider = openai_compat_provider("local-ollama", "gemma4:latest", "http://host:11434/v1");
+        let provider =
+            openai_compat_provider("local-ollama", "gemma4:latest", "http://host:11434/v1");
         let args = agent.launch_args(&provider);
         assert_eq!(args, vec!["-m", "local-ollama/gemma4:latest"]);
     }
@@ -400,7 +412,10 @@ mod tests {
     #[test]
     fn pi_manifest_config_file_path() {
         let agent = load_real("pi");
-        assert_eq!(agent.config_file_path(), Some("/root/.pi/agent/models.json"));
+        assert_eq!(
+            agent.config_file_path(),
+            Some("/root/.pi/agent/models.json")
+        );
     }
 
     #[test]
@@ -544,7 +559,10 @@ apt_deps: [curl]
         let cmd = cfg.build_command();
         assert_eq!(cmd[0], "sh");
         let script = &cmd[2];
-        assert!(script.contains("apt-get install"), "should install apt deps");
+        assert!(
+            script.contains("apt-get install"),
+            "should install apt deps"
+        );
         assert!(script.contains("curl -fsSL 'https://example.com/install.sh'"));
         assert!(script.contains("NONINTERACTIVE=1 sh"));
     }
@@ -583,8 +601,14 @@ env:
   SANDBOX: local
 "#;
         let manifest: AgentManifest = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(manifest.env.get("MY_VAR").map(|s| s.as_str()), Some("my_value"));
-        assert_eq!(manifest.env.get("SANDBOX").map(|s| s.as_str()), Some("local"));
+        assert_eq!(
+            manifest.env.get("MY_VAR").map(|s| s.as_str()),
+            Some("my_value")
+        );
+        assert_eq!(
+            manifest.env.get("SANDBOX").map(|s| s.as_str()),
+            Some("local")
+        );
     }
 
     #[test]
@@ -606,8 +630,14 @@ env:
             raw: serde_json::Value::Null,
         };
         let extra = agent.extra_env(&provider);
-        assert!(extra.contains_key("HERMES_SANDBOX"), "must set HERMES_SANDBOX");
-        assert!(extra.contains_key("HERMES_NON_INTERACTIVE"), "must set HERMES_NON_INTERACTIVE");
+        assert!(
+            extra.contains_key("HERMES_SANDBOX"),
+            "must set HERMES_SANDBOX"
+        );
+        assert!(
+            extra.contains_key("HERMES_NON_INTERACTIVE"),
+            "must set HERMES_NON_INTERACTIVE"
+        );
         // Hermes is a daemon agent.
         assert!(agent.daemon_config().is_some());
     }
@@ -625,7 +655,10 @@ ports: []
         let cfg: DaemonConfig = serde_yaml::from_str(yaml).unwrap();
         let setup = cfg.setup.unwrap();
         assert_eq!(setup.method, "config_file");
-        assert_eq!(setup.config_path.as_deref(), Some("/root/.agent/config.json"));
+        assert_eq!(
+            setup.config_path.as_deref(),
+            Some("/root/.agent/config.json")
+        );
         assert!(setup.config_template.is_some());
     }
 }

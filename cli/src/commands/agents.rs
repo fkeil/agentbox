@@ -10,18 +10,13 @@ pub struct AgentsArgs {
 }
 
 pub async fn run(args: AgentsArgs) -> anyhow::Result<()> {
-    let manifests_dir = args
-        .manifests_dir
-        .or_else(|| {
-            let d = PathBuf::from("manifests");
-            d.is_dir().then_some(d)
-        });
+    let manifests_dir = args.manifests_dir.or_else(|| {
+        let d = PathBuf::from("manifests");
+        d.is_dir().then_some(d)
+    });
 
     // Built-in agents (always available as fallback)
-    let builtins: &[(&str, &str)] = &[
-        ("claude-code", "Claude Code"),
-        ("opencode", "OpenCode"),
-    ];
+    let builtins: &[(&str, &str)] = &[("claude-code", "Claude Code"), ("opencode", "OpenCode")];
 
     // Manifest agents (override builtins when names match)
     let manifest_ids: std::collections::HashSet<String> = manifests_dir

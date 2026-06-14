@@ -13,7 +13,10 @@ pub async fn run(_args: ListArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("{:<22} {:<20} {:<10} {:<12} FOLDER / PORTS", "NAME", "AGENT", "STATUS", "MODE");
+    println!(
+        "{:<22} {:<20} {:<10} {:<12} FOLDER / PORTS",
+        "NAME", "AGENT", "STATUS", "MODE"
+    );
     println!("{}", "─".repeat(90));
 
     for b in &boxes {
@@ -32,7 +35,11 @@ pub async fn run(_args: ListArgs) -> anyhow::Result<()> {
             b.folder.as_deref().unwrap_or("—").to_string()
         };
 
-        let mode = if b.is_daemon { "daemon" } else { b.lifecycle.as_str() };
+        let mode = if b.is_daemon {
+            "daemon"
+        } else {
+            b.lifecycle.as_str()
+        };
 
         println!(
             "{:<22} {:<20} {:<10} {:<12} {}",
@@ -45,7 +52,10 @@ pub async fn run(_args: ListArgs) -> anyhow::Result<()> {
         .filter(|b| b.lifecycle == "ephemeral" && !b.is_daemon)
         .collect();
     if !orphaned.is_empty() {
-        println!("\n{} orphaned ephemeral container(s). Remove with:", orphaned.len());
+        println!(
+            "\n{} orphaned ephemeral container(s). Remove with:",
+            orphaned.len()
+        );
         for b in &orphaned {
             println!("  agentbox kill {}", b.box_name);
         }
