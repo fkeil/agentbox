@@ -28,4 +28,9 @@ agentbox-core = { path = "../../core" }
 serde_yaml = "0.9"
 
 [patch.crates-io]
+# brotli 8.0.3 from crates.io declares alloc-no-stdlib "2.0", but alloc-stdlib 0.2.3
+# upgraded to alloc-no-stdlib "3.0". Cargo resolves two incompatible versions of
+# alloc-no-stdlib, so StandardAlloc doesn't satisfy brotli's Allocator<T> bounds (E0277).
+# This local copy bumps the alloc-no-stdlib dep to "3.0" so only one version is in the graph.
 brotli = { path = "../brotli-patch" }
+
