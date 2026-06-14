@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agents::{self, AgentError};
 use crate::auth::AuthError;
-use crate::config::{self, BoxConfig, ConfigError, Lifecycle, ProviderType};
+use crate::config::{self, BoxConfig, ConfigError, Lifecycle, ProviderType, SyncMode};
 use crate::container::{
     BoxInfo, ContainerBackend, ContainerError, ContainerId, ContainerSpec, ContainerStatus,
     DockerBackend,
@@ -106,10 +106,6 @@ pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Res
             path: cfg.folder.path.clone(),
             source: e,
         })?;
-    let bind_mounts = vec![(
-        host_folder.to_string_lossy().into_owned(),
-        agent.workdir().to_string(),
-    )];
     let memory_limit = cfg
         .resources
         .memory
@@ -124,6 +120,41 @@ pub async fn run_box_config(cfg: BoxConfig, manifests_dir: Option<&Path>) -> Res
     let mut launch_cmd = agent.launch_command();
     launch_cmd.extend(agent.launch_args(&cfg.provider));
     let launch_cmd_json = serde_json::to_string(&launch_cmd).unwrap_or_default();
+
+    if cfg.folder.sync == SyncMode::Snapshot {
+        let diffs = run_ephemeral_snapshot(
+            &docker,
+            &cfg,
+            agent.as_ref(),
+            env_vars,
+            memory_limit,
+            base_image,
+            cache_image,
+            use_cache,
+            launch_cmd,
+            host_folder.clone(),
+            resolved_secret.as_str(),
+        )
+        .await?;
+
+        crate::sync::store_diff(&diffs, &host_folder).ok();
+
+        if diffs.is_empty() {
+            eprintln!("Agent made no changes.");
+        } else {
+            eprintln!(
+                "\n{} file(s) changed. Diff stored at: {}",
+                diffs.len(),
+                crate::sync::diff_path_for(&host_folder).display()
+            );
+        }
+        return Ok(());
+    }
+
+    let bind_mounts = vec![(
+        host_folder.to_string_lossy().into_owned(),
+        agent.workdir().to_string(),
+    )];
 
     if cfg.lifecycle == Lifecycle::Persistent {
         run_persistent(
@@ -237,7 +268,99 @@ pub async fn down_box(box_name: &str) -> Result<(), EngineError> {
     remove_box(box_name).await
 }
 
+/// Apply changes from the last snapshot run for `host_folder`.
+/// Only files named in `approved_paths` are written back to the host.
+pub async fn apply_snapshot_diff(
+    host_folder: &std::path::Path,
+    approved_paths: &[String],
+) -> Result<(), EngineError> {
+    let diffs = crate::sync::load_diff(host_folder)
+        .ok_or_else(|| EngineError::Container(ContainerError::BoxNotFound(
+            format!("no snapshot diff found for {}", host_folder.display()),
+        )))?;
+    crate::sync::apply_approved_changes(host_folder, &diffs, approved_paths)
+        .map_err(|e| EngineError::Container(ContainerError::Io(e)))
+}
+
 // ── Lifecycle implementations ─────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+async fn run_ephemeral_snapshot(
+    docker: &DockerBackend,
+    cfg: &BoxConfig,
+    agent: &dyn crate::agents::AgentDef,
+    env_vars: Vec<String>,
+    memory_limit: Option<u64>,
+    base_image: String,
+    cache_image: String,
+    use_cache: bool,
+    launch_cmd: Vec<String>,
+    host_folder: std::path::PathBuf,
+    resolved_key: &str,
+) -> Result<Vec<crate::sync::FileDiff>, EngineError> {
+    let container_name = format!(
+        "agentbox-{}-{}",
+        agent.id(),
+        slug_from_path(&host_folder)
+    );
+
+    docker
+        .remove_container(&ContainerId(container_name.clone()))
+        .await
+        .ok();
+
+    let spec = ContainerSpec {
+        name: container_name.clone(),
+        image: base_image,
+        bind_mounts: vec![],  // no bind mount — folder is copied in
+        volume_mounts: vec![],
+        env_vars,
+        cpu_limit: cfg.resources.cpus,
+        memory_limit,
+        extra_hosts: host_gateway_hosts(),
+        network_mode: "bridge".to_string(),
+        workdir: agent.workdir().to_string(),
+        labels: HashMap::new(),
+    };
+
+    let container_id = docker.create_container(&spec).await?;
+    docker.start_container(&container_id).await?;
+
+    let cleanup = CleanupGuard {
+        docker,
+        id: container_id.clone(),
+        persistent: false,
+    };
+
+    install_and_cache(docker, &container_id, agent, &cache_image, use_cache).await?;
+    write_agent_config(docker, &container_id, agent, &cfg.provider, resolved_key).await?;
+
+    eprintln!("Copying workspace into container (snapshot mode)...");
+    docker
+        .copy_dir_to_container(&container_id, &host_folder, agent.workdir())
+        .await?;
+
+    eprintln!("Launching {}...", agent.id());
+    let exit_code = docker
+        .attach_interactive(&container_id, &launch_cmd, agent.workdir())
+        .await?;
+
+    eprintln!("Computing diff...");
+    let diffs = crate::sync::compute_snapshot_diff(
+        docker,
+        &container_id,
+        agent.workdir(),
+        &host_folder,
+    )
+    .await?;
+
+    drop(cleanup);
+
+    if exit_code != 0 {
+        eprintln!("Agent exited with code {exit_code}");
+    }
+    Ok(diffs)
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn run_ephemeral(
