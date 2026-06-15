@@ -27,6 +27,43 @@ pub struct BoxConfig {
     /// Container backend to use. `auto` (default) tries Docker then Podman.
     #[serde(default)]
     pub backend: BackendChoice,
+    /// Shell commands to run on the host before/after the container session.
+    #[serde(default)]
+    pub hooks: HooksConfig,
+    /// Additional host directories to bind-mount into the container (read-only by default).
+    #[serde(default)]
+    pub extra_mounts: Vec<ExtraMount>,
+    /// Send an OS desktop notification when the session ends.
+    #[serde(default)]
+    pub notifications: bool,
+    /// Remote Docker host (e.g. `ssh://user@host`). Overrides `DOCKER_HOST`.
+    #[serde(default)]
+    pub remote: Option<String>,
+}
+
+/// Host shell commands executed before and after a container session.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct HooksConfig {
+    #[serde(default)]
+    pub before: Vec<String>,
+    #[serde(default)]
+    pub after: Vec<String>,
+}
+
+/// An extra bind-mount added alongside the primary workspace folder.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExtraMount {
+    /// Absolute or relative path on the host.
+    pub path: PathBuf,
+    /// Absolute path inside the container.
+    pub container_path: String,
+    /// Mount as read-only (default: true).
+    #[serde(default = "default_true")]
+    pub readonly: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Which container backend (or isolation layer) to use.
@@ -150,6 +187,14 @@ pub fn validate_config(cfg: &BoxConfig) -> Result<(), ConfigError> {
     if let Some(mem) = &cfg.resources.memory {
         if let Err(e) = parse_memory_bytes(mem) {
             errors.push(format!("resources.memory: {e}"));
+        }
+    }
+    for (i, mount) in cfg.extra_mounts.iter().enumerate() {
+        if !mount.path.exists() {
+            errors.push(format!(
+                "extra_mounts[{i}].path `{}` does not exist",
+                mount.path.display()
+            ));
         }
     }
 
@@ -304,5 +349,102 @@ backend: microvm
 "#;
         let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.backend, BackendChoice::Microvm);
+    }
+
+    #[test]
+    fn hooks_default_empty() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.hooks.before.is_empty());
+        assert!(cfg.hooks.after.is_empty());
+    }
+
+    #[test]
+    fn hooks_parse() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+hooks:
+  before:
+    - echo pre-hook
+  after:
+    - echo post-hook
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.hooks.before, vec!["echo pre-hook"]);
+        assert_eq!(cfg.hooks.after, vec!["echo post-hook"]);
+    }
+
+    #[test]
+    fn extra_mounts_parse() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+extra_mounts:
+  - path: /tmp
+    container_path: /docs
+  - path: /tmp
+    container_path: /data
+    readonly: false
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.extra_mounts.len(), 2);
+        assert!(cfg.extra_mounts[0].readonly); // default is true
+        assert!(!cfg.extra_mounts[1].readonly);
+        assert_eq!(cfg.extra_mounts[0].container_path, "/docs");
+    }
+
+    #[test]
+    fn notifications_defaults_false() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!cfg.notifications);
+    }
+
+    #[test]
+    fn remote_field_parses() {
+        let yaml = r#"
+agent: claude-code
+folder:
+  path: /tmp
+provider:
+  name: anthropic
+  type: anthropic
+  model: claude-sonnet-4-6
+  auth: "none"
+remote: ssh://user@myserver
+"#;
+        let cfg: BoxConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.remote.as_deref(), Some("ssh://user@myserver"));
     }
 }

@@ -132,6 +132,32 @@ pub fn save_profile(profile: &Profile, force: bool) -> Result<PathBuf, ProfileEr
     Ok(path)
 }
 
+/// Serialize a profile to a YAML string (for sharing / export).
+pub fn export_profile_yaml(name: &str) -> Result<String, ProfileError> {
+    let profile = load_profile(name)?;
+    serde_yaml::to_string(&profile).map_err(|e| ProfileError::Parse {
+        name: name.to_string(),
+        source: e,
+    })
+}
+
+/// Deserialize a profile from YAML and save it (for import).
+/// If `name_override` is given, the profile is renamed before saving.
+pub fn import_profile_yaml(
+    yaml: &str,
+    name_override: Option<&str>,
+    force: bool,
+) -> Result<PathBuf, ProfileError> {
+    let mut profile: Profile = serde_yaml::from_str(yaml).map_err(|e| ProfileError::Parse {
+        name: "<import>".to_string(),
+        source: e,
+    })?;
+    if let Some(n) = name_override {
+        profile.name = n.to_string();
+    }
+    save_profile(&profile, force)
+}
+
 /// Remove a profile by name.
 pub fn remove_profile(name: &str) -> Result<(), ProfileError> {
     let path = profiles_dir().join(format!("{name}.yaml"));
@@ -194,6 +220,33 @@ mod tests {
         let cfg = p.into_box_config(PathBuf::from("/tmp"), None, Some(Lifecycle::Persistent));
         assert_eq!(cfg.lifecycle, Lifecycle::Persistent);
     }
+
+    #[test]
+    fn export_and_import_yaml_round_trip() {
+        let p = test_profile("export-test");
+        let yaml = serde_yaml::to_string(&p).unwrap();
+
+        // import with same name
+        let p2 = import_profile_yaml(&yaml, None, true).unwrap();
+        let loaded = load_profile_file(&p2).unwrap();
+        assert_eq!(loaded.agent, "claude-code");
+        assert_eq!(loaded.provider.model, "claude-sonnet-4-6");
+
+        // import with a different name
+        let p3 = import_profile_yaml(&yaml, Some("renamed-profile"), true).unwrap();
+        let loaded3 = load_profile_file(&p3).unwrap();
+        assert_eq!(loaded3.name, "renamed-profile");
+
+        // cleanup
+        std::fs::remove_file(p2).ok();
+        std::fs::remove_file(p3).ok();
+    }
+
+    #[test]
+    fn import_invalid_yaml_errors() {
+        let result = import_profile_yaml("not: valid: yaml: [[[", None, true);
+        assert!(result.is_err());
+    }
 }
 
 impl Profile {
@@ -220,6 +273,10 @@ impl Profile {
             resources: self.resources,
             extra_env: self.extra_env,
             backend: self.backend,
+            hooks: Default::default(),
+            extra_mounts: vec![],
+            notifications: false,
+            remote: None,
         }
     }
 }

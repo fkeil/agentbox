@@ -26,8 +26,11 @@ Three frontends share the same engine: **CLI** (scriptable, CI-friendly), **TUI*
 16. [Container Backend (Docker / Podman / microVM)](#16-container-backend-docker--podman--microvm)
 17. [Profiles (Presets)](#17-profiles-presets)
 18. [Manifest Management](#18-manifest-management)
-19. [Logging & Diagnostics](#19-logging--diagnostics)
-20. [Troubleshooting](#20-troubleshooting)
+19. [Web Dashboard (`agentbox serve`)](#19-web-dashboard-agentbox-serve)
+20. [Cloud Sync (`agentbox sync`)](#20-cloud-sync-agentbox-sync)
+21. [Post-Session Intelligence](#21-post-session-intelligence)
+22. [Logging & Diagnostics](#22-logging--diagnostics)
+23. [Troubleshooting](#23-troubleshooting)
 
 ---
 
@@ -138,23 +141,43 @@ The first run pulls the base image and installs the agent (~1–2 min). Subseque
 ### Commands
 
 ```
-agentbox up --config <path>     Launch a box from a box.yaml file
-agentbox down <box-name>        Stop + remove a named persistent box (container + state volume)
-agentbox list                   List all boxes (persistent + orphaned ephemeral containers)
-agentbox kill <box-name>        Force-remove a container (no state volume deletion)
+# ── Box lifecycle ──────────────────────────────────────────────────────────
+agentbox up --config <path>                  Launch a box from a box.yaml file
+agentbox up --config a.yaml --config b.yaml  Launch multiple boxes sequentially
+agentbox up --dry-run --config <path>        Validate config and print what would happen
+agentbox up --remote ssh://user@host         Launch box on a remote Docker host
+agentbox init                                Generate a new box.yaml interactively
+agentbox attach <box-name>                   Reconnect to a stopped/running persistent box
+agentbox down <box-name>                     Stop + remove a named persistent box
+agentbox kill <box-name>                     Force-remove a container (keeps state volume)
+agentbox list                                List all boxes
+
+# ── Images ────────────────────────────────────────────────────────────────
 agentbox images                 List cached agent install images
 agentbox images rm <agent-id>   Delete a specific cache image
 agentbox images prune           Delete all cache images
+
+# ── Agents & manifests ────────────────────────────────────────────────────
 agentbox agents                 List all available agents (manifests + built-ins)
-agentbox attach <box-name>      Reconnect to a stopped/running persistent box
-agentbox profile list           List saved profiles
-agentbox profile save <name> --from <box.yaml>  Save a box.yaml as a named profile
-agentbox profile run <name> --folder <path>  Launch a box from a saved profile
-agentbox profile show <name>    Show a profile's settings
-agentbox profile rm <name>      Delete a saved profile
 agentbox manifest list          List all manifests (bundled + user-installed)
 agentbox manifest add <source>  Install a manifest from a URL or local file
 agentbox manifest rm <id>       Remove a user-installed manifest
+
+# ── Profiles ──────────────────────────────────────────────────────────────
+agentbox profile list                         List saved profiles
+agentbox profile save <name> --from <path>    Save a box.yaml as a named profile
+agentbox profile run <name> --folder <path>   Launch a box from a saved profile
+agentbox profile show <name>                  Show a profile's settings
+agentbox profile rm <name>                    Delete a profile
+agentbox profile share <name>                 Print a profile as a base64 string for sharing
+agentbox profile import <base64>              Import a shared profile
+
+# ── Web dashboard ─────────────────────────────────────────────────────────
+agentbox serve [--port 7070] [--host 127.0.0.1]  Start REST API + web dashboard
+
+# ── Cloud sync ────────────────────────────────────────────────────────────
+agentbox sync push <box-name> <remote>       Upload state volume to rclone remote
+agentbox sync pull <box-name> <remote>       Restore state volume from rclone remote
 ```
 
 ### Examples
@@ -288,6 +311,34 @@ EOF
 agentbox up --config pi-local.yaml
 ```
 
+**Dry-run (validate without touching Docker):**
+
+```bash
+agentbox up --dry-run --config box.yaml
+# Prints resolved config table and container spec, exits 0
+```
+
+**Multi-box launch:**
+
+```bash
+agentbox up --config backend.yaml --config frontend.yaml
+# Runs boxes sequentially; each box is fully interactive before the next starts
+```
+
+**Remote Docker host:**
+
+```bash
+agentbox up --config box.yaml --remote ssh://user@myserver
+# Connects to the remote Docker daemon over SSH
+```
+
+**Interactive config generator:**
+
+```bash
+agentbox init
+# 8-step wizard; writes a ready-to-use box.yaml to disk
+```
+
 ---
 
 ## 5. TUI Usage
@@ -360,6 +411,8 @@ Select a box and press `Enter` to see its detail view.
 | Remove | `Enter` on **Remove** |
 | Back | `Esc` |
 
+For running boxes, the detail view shows a live **Resources** line (`CPU X.X%  MEM Y / Z MiB`) that refreshes every 2 seconds.
+
 ### Cache Images Screen
 
 Press `i` from the Home screen to manage cached agent install images.
@@ -415,7 +468,7 @@ Click the **☀** button in the top-right corner of the title bar to toggle betw
 
 ### Home Screen
 
-Displays all boxes (persistent + orphaned ephemeral) as cards.
+Displays all boxes (persistent + orphaned ephemeral) as cards. The list **auto-refreshes every 3 seconds** — no manual refresh needed.
 
 **Persistent box cards** show:
 - Box name + lifecycle badge
@@ -423,7 +476,11 @@ Displays all boxes (persistent + orphaned ephemeral) as cards.
 - Status dot (● green = running, ○ grey = stopped)
 - **Stop**, **Attach**, and **Remove** buttons (context-sensitive)
 
-**Orphaned ephemeral container cards** show as red-tinted with a "⚠ orphaned" badge and a single **Kill** button to force-remove the container.
+**Running ephemeral box cards** show the box as active with a green status dot while the session is in progress.
+
+**Orphaned ephemeral container cards** (stopped ephemeral containers that were not cleaned up) appear red-tinted with a "⚠ orphaned" badge and a single **Kill** button.
+
+The terminal window title is set to `"Agent - ProjectName"` throughout the session and is maintained even if the agent tries to override it.
 
 Press **New Box** to open the wizard. The **Cache Images** section appears below the box list (see §14).
 
@@ -499,6 +556,29 @@ resources:
 extra_env:
   SOME_TOKEN: ${env:SOME_TOKEN}
   LITERAL_VAR: "hello"
+
+# Pre/post hooks — shell commands run on the HOST before/after the session
+hooks:
+  before:
+    - echo "Starting session"
+    - ./scripts/pre-session.sh
+  after:
+    - echo "Session ended"
+
+# Additional host folders to mount read-only (or read-write) into the container
+extra_mounts:
+  - path: ~/shared-docs          # host path (absolute or ~/…)
+    container_path: /docs        # where it appears inside the container
+    readonly: true               # default: true
+  - path: /tmp/scratch
+    container_path: /scratch
+    readonly: false
+
+# Send an OS notification (macOS/Linux/Windows) when the session ends
+notifications: true
+
+# Override the Docker host for this box (also settable via --remote flag)
+remote: ssh://user@myserver
 ```
 
 ### Provider examples
@@ -1078,6 +1158,25 @@ agentbox profile show my-profile # show a profile's settings
 agentbox profile rm my-profile   # delete a profile
 ```
 
+### Share a profile with a colleague
+
+```bash
+# Export a profile as a base64 string and copy it to your clipboard:
+agentbox profile share my-anthropic
+# → prints a long base64 string
+
+# On the receiving machine, import it:
+agentbox profile import <base64-string>
+
+# Import with a different name:
+agentbox profile import <base64-string> --name their-profile
+
+# Overwrite if a profile with that name already exists:
+agentbox profile import <base64-string> --force
+```
+
+The base64 payload is just the profile YAML; it contains no secrets (auth values are references like `${env:ANTHROPIC_API_KEY}`, not the actual keys).
+
 ---
 
 ## 18. Manifest Management
@@ -1142,7 +1241,101 @@ config_file:
 
 ---
 
-## 19. Logging & Diagnostics
+## 19. Web Dashboard (`agentbox serve`)
+
+`agentbox serve` starts a local REST API server and an embedded web dashboard for managing boxes from any browser — useful when you can't run the TUI or GUI.
+
+```bash
+agentbox serve                    # listen on http://127.0.0.1:7070
+agentbox serve --port 8080        # custom port
+agentbox serve --host 0.0.0.0     # expose to the local network (use with care)
+```
+
+Open `http://localhost:7070` in your browser to get the dashboard. The box list refreshes every 5 seconds automatically.
+
+### REST API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/boxes` | List all boxes |
+| `DELETE` | `/api/boxes/:name` | Stop + remove a box |
+| `GET` | `/api/agents` | List available agents |
+| `GET` | `/api/images` | List cache images |
+| `DELETE` | `/api/images/:id` | Remove a cache image |
+| `GET` | `/` | Embedded HTML dashboard |
+
+All endpoints return JSON. Example:
+```bash
+curl http://localhost:7070/api/boxes | jq .
+```
+
+---
+
+## 20. Cloud Sync (`agentbox sync`)
+
+`agentbox sync` backs up and restores a persistent box's state volume to any cloud destination supported by [rclone](https://rclone.org). Both `rclone` and `docker` must be in PATH.
+
+```bash
+# Push state volume to S3
+agentbox sync push my-box s3:my-bucket/agentbox
+
+# Restore from S3 (creates the volume if it doesn't exist)
+agentbox sync pull my-box s3:my-bucket/agentbox
+
+# Other rclone remotes work too
+agentbox sync push my-box gcs:my-bucket/agentbox
+agentbox sync push my-box sftp:myserver:/backups/agentbox
+agentbox sync push my-box gdrive:agentbox-backups
+```
+
+The state volume name is `agentbox-state-<box-name>`. Files are archived as `<remote>/<box-name>.tar.gz`.
+
+**Setup rclone:** `rclone config` — add your remote once, then use its name in the commands above. See [rclone.org/docs](https://rclone.org/docs/) for per-provider configuration.
+
+---
+
+## 21. Post-Session Intelligence
+
+After each box session ends (before container removal), agentbox automatically prints a summary of what happened.
+
+### Git summary
+
+If the workspace is a git repository, agentbox runs `git diff --stat` inside the container and prints a compact summary of changed files:
+
+```
+── Git summary ──────────────────────────────
+ src/main.rs   | 42 ++++++++++--
+ README.md     |  8 ++--
+ 2 files changed, 47 insertions(+), 3 deletions(-)
+```
+
+### Egress log (allowlist mode only)
+
+When `network: allowlist` is set, a summary of blocked outbound connections is printed:
+
+```
+── Egress log ───────────────────────────────
+Blocked: 3 packets to 2 destinations
+```
+
+### Cost estimate (Claude Code only)
+
+For Claude Code sessions, agentbox parses the agent's log to estimate token usage and cost:
+
+```
+── Cost estimate ────────────────────────────
+Estimated cost: $0.042  (input: 8.2k  output: 1.4k tokens)
+```
+
+Cost rates are defined in the manifest (`cost.input_per_1m` / `cost.output_per_1m`) and can be customised for any agent.
+
+### OS notifications
+
+Set `notifications: true` in `box.yaml` to receive a desktop notification when the session ends (macOS, Linux with `notify-send`, Windows).
+
+---
+
+## 22. Logging & Diagnostics
 
 ### Structured logs
 
@@ -1178,7 +1371,7 @@ The file contains the panic message and a full stack backtrace. Include this fil
 
 ---
 
-## 20. Troubleshooting
+## 23. Troubleshooting
 
 ### Docker / Podman not running
 

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use agentbox_core::config::{
     AgentId, BoxConfig, FolderConfig, Lifecycle, NetworkMode, ProviderConfig, ProviderType,
@@ -462,6 +463,8 @@ struct App {
     detail_box: Option<BoxInfo>,
     detail_action_idx: usize,
     detail_list_state: ListState,
+    detail_stats: Option<agentbox_core::ContainerStats>,
+    stats_last_tick: Instant,
 
     // Images screen
     cache_images: Vec<agentbox_core::CacheImage>,
@@ -561,6 +564,8 @@ impl App {
             detail_box: None,
             detail_action_idx: 0,
             detail_list_state,
+            detail_stats: None,
+            stats_last_tick: Instant::now() - Duration::from_secs(60),
 
             cache_images,
             images_idx: 0,
@@ -693,6 +698,10 @@ impl App {
             },
             extra_env: HashMap::new(),
             backend: agentbox_core::config::BackendChoice::Auto,
+            hooks: Default::default(),
+            extra_mounts: vec![],
+            notifications: false,
+            remote: None,
         }
     }
 
@@ -748,29 +757,51 @@ fn event_loop(
     app: &mut App,
 ) -> anyhow::Result<WizardResult> {
     loop {
+        // Refresh CPU/MEM stats every 2s when viewing a running non-daemon box.
+        if app.screen == Screen::BoxDetail {
+            let now = Instant::now();
+            if now.duration_since(app.stats_last_tick) >= Duration::from_secs(2) {
+                app.stats_last_tick = now;
+                if let Some(b) = app
+                    .detail_box
+                    .as_ref()
+                    .filter(|b| b.status == ContainerStatus::Running && !b.is_daemon)
+                {
+                    let name = format!("agentbox-{}", b.box_name);
+                    app.detail_stats =
+                        do_async(agentbox_core::get_container_stats(&name)).ok();
+                }
+            }
+        } else {
+            app.detail_stats = None;
+        }
+
         terminal.draw(|f| render(f, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(WizardResult::Cancelled);
-            }
-            // Ctrl+T: cycle color theme globally from any screen
-            if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                app.theme_idx = (app.theme_idx + 1) % THEMES.len();
-                app.status_msg = Some((format!("Theme: {}", THEMES[app.theme_idx].name), false));
-                continue;
-            }
-            match handle_key(app, key) {
-                Action::Continue => {}
-                Action::Quit => return Ok(WizardResult::Cancelled),
-                Action::Launch => {
-                    return Ok(WizardResult::Launch {
-                        config: Box::new(app.build_config()),
-                        manifests_dir: app.manifests_dir.clone(),
-                    });
+        if event::poll(Duration::from_millis(200))? {
+            if let Event::Key(key) = event::read()? {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(WizardResult::Cancelled);
                 }
-                Action::Attach(box_name) => {
-                    return Ok(WizardResult::Attach { box_name });
+                // Ctrl+T: cycle color theme globally from any screen
+                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.theme_idx = (app.theme_idx + 1) % THEMES.len();
+                    app.status_msg =
+                        Some((format!("Theme: {}", THEMES[app.theme_idx].name), false));
+                    continue;
+                }
+                match handle_key(app, key) {
+                    Action::Continue => {}
+                    Action::Quit => return Ok(WizardResult::Cancelled),
+                    Action::Launch => {
+                        return Ok(WizardResult::Launch {
+                            config: Box::new(app.build_config()),
+                            manifests_dir: app.manifests_dir.clone(),
+                        });
+                    }
+                    Action::Attach(box_name) => {
+                        return Ok(WizardResult::Attach { box_name });
+                    }
                 }
             }
         }
@@ -1394,7 +1425,9 @@ fn render_home(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_box_detail(frame: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
-    let chunks = Layout::vertical([Constraint::Length(7), Constraint::Min(0)]).split(area);
+    let info_height = if app.detail_stats.is_some() { 8 } else { 7 };
+    let chunks =
+        Layout::vertical([Constraint::Length(info_height), Constraint::Min(0)]).split(area);
 
     let info = if let Some(b) = &app.detail_box {
         let status_str = if b.lifecycle == "ephemeral" {
@@ -1406,10 +1439,22 @@ fn render_box_detail(frame: &mut Frame, area: Rect, app: &App) {
             }
         };
         let folder = b.folder.as_deref().unwrap_or("—");
-        format!(
+        let mut lines = format!(
             "\n  Name:      {}\n  Agent:     {}\n  Lifecycle: {}\n  Status:    {}\n  Folder:    {}",
             b.box_name, b.agent_display_name, b.lifecycle, status_str, folder
-        )
+        );
+        if let Some(s) = &app.detail_stats {
+            let mem_str = if s.mem_limit_mb > 0.0 {
+                format!("{:.0} / {:.0} MiB", s.mem_mb, s.mem_limit_mb)
+            } else {
+                format!("{:.0} MiB", s.mem_mb)
+            };
+            lines.push_str(&format!(
+                "\n  Resources: CPU {:.1}%  MEM {}",
+                s.cpu_pct, mem_str
+            ));
+        }
+        lines
     } else {
         String::new()
     };

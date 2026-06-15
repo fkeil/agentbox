@@ -43,16 +43,26 @@ const state = {
 
 // ── View routing ──────────────────────────────────────────────────────────────
 
+let _autoRefreshTimer = null;
+
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  // Auto-refresh boxes every 3 s on the home view; pause on other views.
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+  if (id === 'view-home') {
+    _autoRefreshTimer = setInterval(loadBoxes, 3000);
+  }
 }
 
 // ── Home view ─────────────────────────────────────────────────────────────────
 
 async function loadBoxes() {
   const list = document.getElementById('boxes-list');
-  list.innerHTML = '<p class="hint">Loading…</p>';
+  // Only show "Loading…" on first load (list is empty), not on auto-refresh ticks.
+  if (!list.hasChildNodes()) {
+    list.innerHTML = '<p class="hint">Loading…</p>';
+  }
   try {
     const boxes = await invoke('get_boxes');
     if (boxes.length === 0) {
@@ -71,11 +81,12 @@ async function loadBoxes() {
 
 function makeBoxCard(b) {
   const isEphemeral = b.lifecycle === 'ephemeral';
+  const isOrphaned = isEphemeral && b.status !== 'running';
   const card = document.createElement('div');
-  card.className = 'box-card' + (isEphemeral ? ' box-card-orphaned' : '');
+  card.className = 'box-card' + (isOrphaned ? ' box-card-orphaned' : '');
 
   const dot = document.createElement('div');
-  if (isEphemeral) {
+  if (isOrphaned) {
     dot.className = 'box-status-dot orphaned';
     dot.title = 'Orphaned ephemeral container';
   } else {
@@ -87,7 +98,7 @@ function makeBoxCard(b) {
   const agentLabel = b.project_name
     ? `${esc(b.agent_display_name)} - ${esc(b.project_name)}`
     : esc(b.agent_display_name);
-  const lifecycleBadge = isEphemeral
+  const lifecycleBadge = isOrphaned
     ? `<span class="lifecycle-badge ephemeral-badge">⚠ orphaned</span>`
     : `<span class="lifecycle-badge">${esc(b.lifecycle)}</span>`;
   info.innerHTML = `
@@ -98,8 +109,8 @@ function makeBoxCard(b) {
   const actions = document.createElement('div');
   actions.className = 'box-card-actions';
 
-  if (isEphemeral) {
-    // Orphaned ephemeral container: only Kill action
+  if (isOrphaned) {
+    // Stopped ephemeral container that didn't clean up: only Kill action
     actions.appendChild(btn('Kill', 'btn-danger', async () => {
       if (!confirm(`Force-remove container "${b.box_name}"?\n\nThis removes the container only. No state volume is affected.`)) return;
       try { await invoke('kill_box', { boxName: b.box_name }); loadBoxes(); }
@@ -655,3 +666,4 @@ document.getElementById('btn-diff-discard').onclick = () => {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 loadBoxes();
+_autoRefreshTimer = setInterval(loadBoxes, 3000);

@@ -32,6 +32,9 @@ pub struct AgentManifest {
     #[serde(default)]
     pub env: HashMap<String, String>,
     pub workdir: String,
+    /// Token pricing for estimating session cost.
+    #[serde(default)]
+    pub cost: Option<CostConfig>,
 }
 
 /// Configuration for daemon-mode agents (e.g. Hermes).
@@ -70,6 +73,18 @@ pub struct PortMapping {
     /// If true, the engine will not fail if the host port is already in use.
     #[serde(default)]
     pub optional: bool,
+}
+
+/// Pricing info for estimating session cost from in-container token logs.
+#[derive(Debug, Deserialize)]
+pub struct CostConfig {
+    /// USD per 1M input tokens.
+    pub input_per_1m: f64,
+    /// USD per 1M output tokens.
+    pub output_per_1m: f64,
+    /// Command to run in the container after the session to print token-usage lines.
+    #[serde(default)]
+    pub post_session_cmd: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

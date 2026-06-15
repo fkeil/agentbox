@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bollard::container::{
     CreateContainerOptions, DownloadFromContainerOptions, ListContainersOptions,
-    RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
@@ -47,13 +47,14 @@ pub struct ContainerSpec {
     pub port_bindings: Vec<(u16, u16)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ContainerStatus {
     Running,
     Stopped,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BoxInfo {
     pub box_name: String,
     pub agent_id: String,
@@ -72,8 +73,19 @@ pub struct BoxInfo {
     pub bound_ports: Vec<(u16, u16)>,
 }
 
+/// Live CPU/memory snapshot for a running container.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ContainerStats {
+    /// CPU utilization in percent (0–100 × num_cpus).
+    pub cpu_pct: f32,
+    /// Current memory usage in MiB.
+    pub mem_mb: f64,
+    /// Memory limit for the container in MiB (0 if unlimited).
+    pub mem_limit_mb: f64,
+}
+
 /// A cached agent install image (`agentbox-cache-{agent_id}:latest`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CacheImage {
     pub agent_id: String,
     pub image_name: String,
@@ -120,11 +132,14 @@ pub trait ContainerBackend: Send + Sync {
         container_path: &str,
         content: &[u8],
     ) -> Result<(), ContainerError>;
+    /// `window_title`: if Some, OSC 0/2 title sequences emitted by the container
+    /// are replaced with this string so the host window title stays stable.
     async fn attach_interactive(
         &self,
         id: &ContainerId,
         cmd: &[String],
         workdir: &str,
+        window_title: Option<&str>,
     ) -> Result<i64, ContainerError>;
     async fn stop_container(&self, id: &ContainerId) -> Result<(), ContainerError>;
     async fn remove_container(&self, id: &ContainerId) -> Result<(), ContainerError>;
@@ -302,12 +317,19 @@ impl ContainerBackend for DockerBackend {
         let bind_mounts: Vec<Mount> = spec
             .bind_mounts
             .iter()
-            .map(|(src, dst)| Mount {
-                target: Some(dst.clone()),
-                source: Some(src.clone()),
-                typ: Some(MountTypeEnum::BIND),
-                read_only: Some(false),
-                ..Default::default()
+            .map(|(src, dst)| {
+                let (target, ro) = if let Some(t) = dst.strip_suffix(":ro") {
+                    (t.to_string(), true)
+                } else {
+                    (dst.clone(), false)
+                };
+                Mount {
+                    target: Some(target),
+                    source: Some(src.clone()),
+                    typ: Some(MountTypeEnum::BIND),
+                    read_only: Some(ro),
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -517,6 +539,7 @@ impl ContainerBackend for DockerBackend {
         id: &ContainerId,
         cmd: &[String],
         workdir: &str,
+        window_title: Option<&str>,
     ) -> Result<i64, ContainerError> {
         let cmd_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
@@ -569,6 +592,15 @@ impl ContainerBackend for DockerBackend {
                         .await;
                 }
 
+                // Spawn a task that forwards terminal resize events into the PTY.
+                let resize_task = {
+                    let client = self.client.clone();
+                    let eid = exec_id.clone();
+                    tokio::spawn(async move {
+                        resize_loop(client, eid).await;
+                    })
+                };
+
                 let stdin_task = tokio::spawn(async move {
                     let mut stdin = tokio::io::stdin();
                     let _ = tokio::io::copy(&mut stdin, &mut input).await;
@@ -579,7 +611,11 @@ impl ContainerBackend for DockerBackend {
                         bollard::container::LogOutput::Console { message }
                         | bollard::container::LogOutput::StdOut { message }
                         | bollard::container::LogOutput::StdErr { message } => {
-                            let _ = std::io::stdout().write_all(&message);
+                            let out = match window_title {
+                                Some(t) => std::borrow::Cow::Owned(replace_osc_title(&message, t)),
+                                None => std::borrow::Cow::Borrowed(message.as_ref()),
+                            };
+                            let _ = std::io::stdout().write_all(&out);
                             let _ = std::io::stdout().flush();
                         }
                         _ => {}
@@ -587,6 +623,7 @@ impl ContainerBackend for DockerBackend {
                 }
 
                 stdin_task.abort();
+                resize_task.abort();
             }
             StartExecResults::Detached => {}
         }
@@ -874,6 +911,55 @@ impl ContainerBackend for DockerBackend {
 impl DockerBackend {
     /// Launch a command inside the container in the background (detached exec).
     /// Returns immediately; the command keeps running until the container stops.
+    /// Return a one-shot CPU + memory snapshot for a running container.
+    pub async fn container_stats_once(
+        &self,
+        id: &ContainerId,
+    ) -> Result<ContainerStats, ContainerError> {
+        let mut stream = self.client.stats(
+            &id.0,
+            Some(StatsOptions {
+                stream: false,
+                one_shot: true,
+            }),
+        );
+        let s = stream
+            .next()
+            .await
+            .ok_or_else(|| ContainerError::BoxNotFound(id.0.clone()))??;
+
+        let cpu_delta = s
+            .cpu_stats
+            .cpu_usage
+            .total_usage
+            .saturating_sub(s.precpu_stats.cpu_usage.total_usage) as f64;
+        let sys_delta = s
+            .cpu_stats
+            .system_cpu_usage
+            .unwrap_or(0)
+            .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0)) as f64;
+        let num_cpus = s.cpu_stats.online_cpus.unwrap_or(1) as f64;
+
+        let cpu_pct = if sys_delta > 0.0 {
+            ((cpu_delta / sys_delta) * num_cpus * 100.0) as f32
+        } else {
+            0.0
+        };
+        let mem_mb = s.memory_stats.usage.unwrap_or(0) as f64 / (1024.0 * 1024.0);
+        let mem_limit = s.memory_stats.limit.unwrap_or(0);
+        let mem_limit_mb = if mem_limit > 0 {
+            mem_limit as f64 / (1024.0 * 1024.0)
+        } else {
+            0.0
+        };
+
+        Ok(ContainerStats {
+            cpu_pct,
+            mem_mb,
+            mem_limit_mb,
+        })
+    }
+
     pub async fn exec_background(
         &self,
         id: &ContainerId,
@@ -927,5 +1013,119 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+/// Forward terminal resize events into a running Docker exec PTY.
+///
+/// Polls the host terminal size every 100 ms and calls resize_exec whenever
+/// the dimensions change. This is more reliable than SIGWINCH because it works
+/// regardless of how the process was launched (direct, shell wrapper, GUI, SSH).
+async fn resize_loop(client: bollard::Docker, exec_id: String) {
+    let mut last_size = crossterm::terminal::size().ok();
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        let current = crossterm::terminal::size().ok();
+        if current != last_size {
+            if let Some((cols, rows)) = current {
+                let _ = client
+                    .resize_exec(&exec_id, ResizeExecOptions { height: rows, width: cols })
+                    .await;
+            }
+            last_size = current;
+        }
+    }
+}
+
+/// Scan `data` for OSC 0 / OSC 2 terminal title sequences (`\x1b]0;...\x07`)
+/// and replace each one with a sequence that sets `title` instead.
+/// Sequences that span chunk boundaries are left untouched (rare in practice).
+fn replace_osc_title(data: &[u8], title: &str) -> Vec<u8> {
+    if !data.contains(&0x1b) {
+        return data.to_vec();
+    }
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        // Match \x1b] — start of an OSC sequence
+        if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == b']' {
+            let rest = &data[i + 2..];
+            // Only intercept OSC 0 and OSC 2 (window/icon title)
+            let is_title = rest.starts_with(b"0;") || rest.starts_with(b"2;");
+            if is_title {
+                // Find BEL (\x07) or ST (\x1b\\) terminator within this chunk
+                let term = rest
+                    .iter()
+                    .position(|&b| b == 0x07)
+                    .map(|p| (p, 1usize))
+                    .or_else(|| {
+                        rest.windows(2)
+                            .position(|w| w == [0x1b, b'\\'])
+                            .map(|p| (p, 2))
+                    });
+                if let Some((end, term_len)) = term {
+                    // Emit our title instead of the container's
+                    out.extend_from_slice(b"\x1b]0;");
+                    out.extend_from_slice(title.as_bytes());
+                    out.push(0x07);
+                    i += 2 + end + term_len;
+                    continue;
+                }
+            }
+        }
+        out.push(data[i]);
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_osc_title;
+
+    #[test]
+    fn no_osc_sequence_unchanged() {
+        let data = b"hello world\r\n";
+        assert_eq!(replace_osc_title(data, "My Title"), data.to_vec());
+    }
+
+    #[test]
+    fn osc0_replaced() {
+        // \x1b]0;OPENCODE\x07 should become \x1b]0;My App\x07
+        let input = b"\x1b]0;OPENCODE\x07some output";
+        let out = replace_osc_title(input, "My App");
+        assert_eq!(out, b"\x1b]0;My App\x07some output");
+    }
+
+    #[test]
+    fn osc2_replaced() {
+        let input = b"\x1b]2;OPENCODE\x07";
+        let out = replace_osc_title(input, "My App");
+        assert_eq!(out, b"\x1b]0;My App\x07");
+    }
+
+    #[test]
+    fn osc1_not_touched() {
+        // OSC 1 (icon name) should pass through unchanged
+        let input = b"\x1b]1;icon\x07";
+        let out = replace_osc_title(input, "My App");
+        assert_eq!(out, input.to_vec());
+    }
+
+    #[test]
+    fn st_terminator_replaced() {
+        // Sequence terminated with ST (\x1b\\) instead of BEL
+        let input = b"\x1b]0;OPENCODE\x1b\\rest";
+        let out = replace_osc_title(input, "My App");
+        assert_eq!(out, b"\x1b]0;My App\x07rest");
+    }
+
+    #[test]
+    fn osc_mid_stream_replaced() {
+        let input = b"before\x1b]0;AGENT\x07after";
+        let out = replace_osc_title(input, "Project");
+        assert_eq!(out, b"before\x1b]0;Project\x07after");
     }
 }

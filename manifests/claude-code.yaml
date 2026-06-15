@@ -33,3 +33,11 @@ oauth:
   cache_path: /root/.claude
 
 workdir: /workspace
+
+cost:
+  input_per_1m: 3.00
+  output_per_1m: 15.00
+  post_session_cmd:
+    - sh
+    - -c
+    - 'f=$(ls -t /root/.claude/logs/ 2>/dev/null | head -1); test -n "$f" && grep -o "\"input_tokens\":[0-9]*" /root/.claude/logs/$f 2>/dev/null | tail -1; grep -o "\"output_tokens\":[0-9]*" /root/.claude/logs/$f 2>/dev/null | tail -1'
