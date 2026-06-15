@@ -14,7 +14,7 @@
 
 **Run AI coding agents in isolated containers — one folder, one agent, zero host exposure.**
 
-Agentbox spins up a Docker container, installs your chosen AI coding agent inside it, and mounts a single host folder as the agent's only view of the filesystem. The agent cannot reach anything outside that folder or outside its allowed network endpoints. When the session ends, you review a diff and approve exactly what gets written back.
+Agentbox spins up an isolated container (Docker or Podman), installs your chosen AI coding agent inside it, and mounts a single host folder as the agent's only view of the filesystem. The agent cannot reach anything outside that folder or outside its allowed network endpoints. When the session ends, you review a diff and approve exactly what gets written back.
 
 Three frontends, one engine: a scriptable **CLI**, a keyboard-driven **TUI**, and a desktop **GUI**.
 
@@ -57,7 +57,8 @@ First run pulls the base image and installs the agent (~1–2 min). Subsequent r
 - **Egress allowlist** — Drop-by-default iptables rules; only the provider API hostname gets through
 - **Two sync modes** — `mount` (live bind-mount) or `snapshot` (copy-in → diff → review → copy-out)
 - **Persistent boxes** — Named containers with state volumes survive across sessions
-- **OAuth support** — In-container device-code flow; token cached in a Docker volume
+- **Docker or Podman** — auto-detected; pin with `backend: docker` / `backend: podman` in `box.yaml`
+- **OAuth support** — In-container device-code flow; token cached in a named volume
 - **CLI / TUI / GUI** — Same engine, pick your interface
 
 ---
@@ -81,8 +82,24 @@ Add a custom agent by dropping a YAML manifest in `manifests/`. See [docs/usage.
 
 | Platform | Requirements |
 |---|---|
-| All | Docker Desktop or Docker Engine (Podman also works) · Rust + Cargo |
+| All | Docker Engine / Docker Desktop **or** Podman · Rust + Cargo |
 | Linux (GUI only) | `libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev` |
+
+**Docker:**
+```bash
+docker info          # verify Docker is running
+```
+
+**Podman** (Linux — enable the Docker-compatible socket):
+```bash
+systemctl --user enable --now podman.socket
+podman info          # verify Podman is running
+```
+
+To use Podman, add `backend: podman` to your `box.yaml` (or set `DOCKER_HOST` and use the default `backend: auto`):
+```yaml
+backend: podman
+```
 
 ### CLI + TUI
 

@@ -1,6 +1,6 @@
 # Agentbox — Usage Guide
 
-Agentbox spins up an isolated Docker container, installs a chosen AI coding agent inside it, and mounts a single folder from your host as the agent's only view of the filesystem. The agent cannot touch anything outside that folder.
+Agentbox spins up an isolated container (Docker or Podman), installs a chosen AI coding agent inside it, and mounts a single folder from your host as the agent's only view of the filesystem. The agent cannot touch anything outside that folder.
 
 Three frontends share the same engine: **CLI** (scriptable, CI-friendly), **TUI** (keyboard-driven terminal UI), and **GUI** (desktop app for non-CLI users).
 
@@ -35,15 +35,30 @@ Three frontends share the same engine: **CLI** (scriptable, CI-friendly), **TUI*
 
 | Requirement | Notes |
 |---|---|
-| Docker Desktop or Docker Engine | Podman with Docker-compatible socket also works |
+| Docker Engine / Docker Desktop **or** Podman | Either backend works; auto-detected at startup |
 | Rust + Cargo | Required to build from source |
 | Linux or macOS | Windows: mostly works via WSL2 / Docker Desktop |
 | For the GUI on Linux | `libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev` |
 
-Verify Docker is running:
-
+**Verify Docker:**
 ```bash
 docker info
+```
+
+**Verify Podman** (Linux — enable the Docker-compatible socket first):
+```bash
+systemctl --user enable --now podman.socket
+podman info
+ls "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+```
+
+To use Podman, add `backend: podman` to your `box.yaml`. Agentbox auto-detects the Podman socket when using `backend: auto` (the default), so you can also just start the socket and omit the field entirely:
+
+```yaml
+# box.yaml
+backend: podman   # explicit
+# — or —
+backend: auto     # auto-detects Docker first, then Podman
 ```
 
 ---
@@ -222,7 +237,7 @@ EOF
 
 agentbox up --config oauth.yaml
 # Claude Code will prompt you to open a URL and log in.
-# The token is cached in a Docker volume; future runs skip the login.
+# The token is cached in a named volume; future runs skip the login.
 ```
 
 **Egress allowlist (restrict outbound to provider only):**
@@ -748,7 +763,7 @@ After a snapshot run, the diff file is printed to stderr. To apply specific file
 
 ## 12. Persistent Boxes
 
-Persistent boxes survive across sessions. Their state (installed tools, shell history, agent credential cache) lives in a named Docker volume (`agentbox-state-<name>`).
+Persistent boxes survive across sessions. Their state (installed tools, shell history, agent credential cache) lives in a named container volume (`agentbox-state-<name>`).
 
 ```yaml
 lifecycle: persistent
@@ -788,7 +803,7 @@ The state volume is mounted at `/root` inside the container. This means:
 
 ## 13. OAuth (Subscription Auth)
 
-Set `auth: oauth` to use in-container OAuth instead of an API key. The agent handles the device-code flow interactively; the token is cached in a named Docker volume so future runs skip the login prompt.
+Set `auth: oauth` to use in-container OAuth instead of an API key. The agent handles the device-code flow interactively; the token is cached in a named volume so future runs skip the login prompt.
 
 ```yaml
 provider:
@@ -1165,14 +1180,27 @@ The file contains the panic message and a full stack backtrace. Include this fil
 
 ## 20. Troubleshooting
 
-### Docker not running
+### Docker / Podman not running
 
 ```
 Error: failed to connect to Docker
 Hint: is Docker running? Check `docker info`
 ```
 
-Start Docker Desktop or `sudo systemctl start docker`.
+**Docker:** start Docker Desktop or run `sudo systemctl start docker`.
+
+**Podman:** enable the socket if it isn't already:
+```bash
+systemctl --user enable --now podman.socket
+```
+If you want agentbox to find it automatically, make sure the socket path exists:
+```bash
+ls "${XDG_RUNTIME_DIR}/podman/podman.sock"
+```
+Or point `DOCKER_HOST` at it explicitly:
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+```
 
 ### Agent install fails
 
