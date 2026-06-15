@@ -10,7 +10,7 @@
 # agentbox
 
 [![CI](https://github.com/fkeil/agentBox/actions/workflows/ci.yml/badge.svg)](https://github.com/fkeil/agentBox/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 
 **Run AI coding agents in isolated containers — one folder, one agent, zero host exposure.**
 
@@ -113,9 +113,4 @@ Covers: all CLI commands, TUI navigation, GUI usage, `box.yaml` schema, auth ref
 
 ## License
 
-Licensed under either of:
-
-- [MIT License](LICENSE-MIT)
-- [Apache License, Version 2.0](LICENSE-APACHE)
-
-at your option.
+Licensed under the [MIT License](LICENSE-MIT).
