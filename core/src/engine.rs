@@ -51,6 +51,8 @@ pub enum EngineError {
     DaemonRequiresPersistent(String),
     #[error("daemon setup failed (exit={code}):\n{stderr}")]
     DaemonSetupFailed { code: i64, stderr: String },
+    #[error("before-hook `{cmd}` failed (exit {code})")]
+    HookFailed { cmd: String, code: i32 },
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────
@@ -72,6 +74,101 @@ pub async fn run_box(config_path: &Path) -> Result<(), EngineError> {
         .or_else(find_manifests_near_exe);
 
     run_box_config(cfg, manifests_dir.as_deref()).await
+}
+
+/// Validate and print what would happen without touching Docker.
+pub async fn dry_run_box(config_path: &Path) -> Result<(), EngineError> {
+    let cfg = config::parse_config(config_path)?;
+    config::validate_config(&cfg)?;
+
+    let manifests_dir = config_path
+        .parent()
+        .map(|d| d.join("manifests"))
+        .filter(|d| d.is_dir())
+        .or_else(|| {
+            let cwd = std::env::current_dir().ok()?;
+            let d = cwd.join("manifests");
+            d.is_dir().then_some(d)
+        })
+        .or_else(find_manifests_near_exe);
+
+    let agent = crate::manifest_store::find_manifest_with_user_store(
+        manifests_dir.as_deref(),
+        &cfg.agent.0,
+    )
+    .map(|m| {
+        Box::new(crate::agents::manifest_agent::ManifestAgentDef::new(m))
+            as Box<dyn crate::agents::AgentDef>
+    })
+    .or_else(|| agents::find_agent(&cfg.agent.0, manifests_dir.as_deref()))
+    .ok_or_else(|| EngineError::UnknownAgent(cfg.agent.0.clone()))?;
+
+    provider::check_provider_compat(
+        agent.id(),
+        &cfg.provider.provider_type,
+        agent.supported_providers(),
+    )?;
+
+    let auth_display = {
+        let r = &cfg.provider.auth;
+        if r == "none" || r == "oauth" {
+            r.clone()
+        } else if let Some(name) = r.strip_prefix("${env:").and_then(|s| s.strip_suffix('}')) {
+            let status = if std::env::var(name).is_ok() { "set" } else { "NOT SET" };
+            format!("{r} ({status})")
+        } else {
+            r.clone()
+        }
+    };
+
+    let host_folder = cfg
+        .folder
+        .path
+        .canonicalize()
+        .map_err(|e| EngineError::BadFolderPath {
+            path: cfg.folder.path.clone(),
+            source: e,
+        })?;
+
+    println!("─── dry-run — no containers will be created ───────────");
+    println!("  agent        : {} ({})", cfg.agent.0, agent.display_name());
+    println!("  folder       : {}", host_folder.display());
+    println!("  sync         : {:?}", cfg.folder.sync);
+    println!("  lifecycle    : {:?}", cfg.lifecycle);
+    if let Some(name) = &cfg.name {
+        println!("  box name     : {name}");
+    }
+    println!(
+        "  provider     : {} ({:?})",
+        cfg.provider.name, cfg.provider.provider_type
+    );
+    println!("  model        : {}", cfg.provider.model);
+    if let Some(url) = &cfg.provider.base_url {
+        println!("  base_url     : {url}");
+    }
+    println!("  auth         : {auth_display}");
+    println!("  network      : {:?}", cfg.network);
+    println!("  backend      : {:?}", cfg.backend);
+    if !cfg.extra_mounts.is_empty() {
+        println!("  extra mounts :");
+        for m in &cfg.extra_mounts {
+            let mode = if m.readonly { ":ro" } else { ":rw" };
+            println!("    {} → {}{mode}", m.path.display(), m.container_path);
+        }
+    }
+    if !cfg.hooks.before.is_empty() || !cfg.hooks.after.is_empty() {
+        println!("  hooks        :");
+        for h in &cfg.hooks.before {
+            println!("    before: {h}");
+        }
+        for h in &cfg.hooks.after {
+            println!("    after : {h}");
+        }
+    }
+    println!("  image        : {}", agent.base_image());
+    println!("───────────────────────────────────────────────────────");
+
+    Ok(())
 }
 
 /// Run a box from a pre-parsed config. Called by the TUI after the wizard
@@ -105,6 +202,9 @@ pub async fn run_box_config(
     let resolved_secret =
         tokio::task::spawn_blocking(move || crate::auth::resolve_auth(&auth_ref)).await??;
 
+    if let Some(remote) = &cfg.remote {
+        std::env::set_var("DOCKER_HOST", remote);
+    }
     let docker = DockerBackend::connect_with_backend(&cfg.backend)?;
     tracing::info!(backend = docker.backend_name, agent = %cfg.agent.0, "starting box");
 
@@ -144,6 +244,15 @@ pub async fn run_box_config(
             tokio::task::spawn_blocking(move || crate::auth::resolve_value(&val_ref)).await??;
         env_vars.push(format!("{key}={}", resolved.as_str()));
     }
+
+    // Run before-hooks on the host (abort launch on failure).
+    run_before_hooks(&cfg.hooks.before)?;
+
+    // Set up guard that runs after-hooks and optional OS notification on session end.
+    let _end_guard = SessionEndGuard {
+        hooks: cfg.hooks.after.clone(),
+        notifications: cfg.notifications,
+    };
 
     let host_folder = cfg
         .folder
@@ -207,10 +316,18 @@ pub async fn run_box_config(
         return Ok(());
     }
 
-    let bind_mounts = vec![(
+    let mut bind_mounts = vec![(
         host_folder.to_string_lossy().into_owned(),
         agent.workdir().to_string(),
     )];
+    for mount in &cfg.extra_mounts {
+        let container_path = if mount.readonly {
+            format!("{}:ro", mount.container_path)
+        } else {
+            mount.container_path.clone()
+        };
+        bind_mounts.push((mount.path.to_string_lossy().into_owned(), container_path));
+    }
 
     // Daemon agents bypass the normal lifecycle branches.
     if let Some(daemon_cfg) = agent.daemon_config() {
@@ -333,8 +450,18 @@ pub async fn attach_box(box_name: &str) -> Result<(), EngineError> {
 
     docker.start_container(&id).await.ok(); // no-op if already running
 
+    let agent_display = labels
+        .get("agentbox.agent-display-name")
+        .map(|s| s.as_str())
+        .unwrap_or(box_name);
+    let project = labels
+        .get("agentbox.project-name")
+        .cloned()
+        .unwrap_or_else(|| box_name.to_string());
     eprintln!("Attaching to box '{box_name}'...");
-    let exit_code = docker.attach_interactive(&id, &launch_cmd, workdir).await?;
+    let title = box_label(agent_display, &project);
+    set_terminal_title(&title);
+    let exit_code = docker.attach_interactive(&id, &launch_cmd, workdir, Some(&title)).await?;
 
     docker.stop_container(&id).await.ok();
     eprintln!("Box stopped. State preserved.");
@@ -531,10 +658,15 @@ async fn run_ephemeral_snapshot(
         .await?;
 
     let project = resolve_project_name(cfg.project_name.as_deref(), &host_folder);
-    eprintln!("Launching {}...", box_label(agent.display_name(), &project));
+    let title = box_label(agent.display_name(), &project);
+    eprintln!("Launching {}...", title);
+    set_terminal_title(&title);
     let exit_code = docker
-        .attach_interactive(&container_id, &launch_cmd, agent.workdir())
+        .attach_interactive(&container_id, &launch_cmd, agent.workdir(), Some(&title))
         .await?;
+
+    print_egress_log(docker, &container_id, cfg).await;
+    print_cost_estimate(docker, &container_id, agent).await;
 
     eprintln!("Computing diff...");
     let diffs =
@@ -630,10 +762,16 @@ async fn run_ephemeral(
     write_agent_config(docker, &container_id, agent, &cfg.provider, resolved_key).await?;
 
     let project = resolve_project_name(cfg.project_name.as_deref(), &host_folder);
-    eprintln!("Launching {}...", box_label(agent.display_name(), &project));
+    let title = box_label(agent.display_name(), &project);
+    eprintln!("Launching {}...", title);
+    set_terminal_title(&title);
     let exit_code = docker
-        .attach_interactive(&container_id, &launch_cmd, agent.workdir())
+        .attach_interactive(&container_id, &launch_cmd, agent.workdir(), Some(&title))
         .await?;
+
+    print_git_summary(docker, &container_id).await;
+    print_egress_log(docker, &container_id, cfg).await;
+    print_cost_estimate(docker, &container_id, agent).await;
 
     drop(cleanup);
 
@@ -672,10 +810,16 @@ async fn run_persistent(
         }
         // Always refresh the agent config in case provider settings changed.
         write_agent_config(docker, &id, agent, &cfg.provider, resolved_key).await?;
+        let project = resolve_project_name(cfg.project_name.as_deref(), Path::new(&host_folder_str));
+        let title = box_label(agent.display_name(), &project);
         eprintln!("Reconnecting to box '{box_name}'...");
+        set_terminal_title(&title);
         let exit_code = docker
-            .attach_interactive(&id, &launch_cmd, agent.workdir())
+            .attach_interactive(&id, &launch_cmd, agent.workdir(), Some(&title))
             .await?;
+        print_git_summary(docker, &id).await;
+        print_egress_log(docker, &id, cfg).await;
+        print_cost_estimate(docker, &id, agent).await;
         docker.stop_container(&id).await.ok();
         eprintln!("Box stopped. State preserved.");
         if exit_code != 0 {
@@ -745,10 +889,16 @@ async fn run_persistent(
     write_agent_config(docker, &container_id, agent, &cfg.provider, resolved_key).await?;
 
     let project = resolve_project_name(cfg.project_name.as_deref(), Path::new(&host_folder_str));
-    eprintln!("Launching {}...", box_label(agent.display_name(), &project));
+    let title = box_label(agent.display_name(), &project);
+    eprintln!("Launching {}...", title);
+    set_terminal_title(&title);
     let exit_code = docker
-        .attach_interactive(&container_id, &launch_cmd, agent.workdir())
+        .attach_interactive(&container_id, &launch_cmd, agent.workdir(), Some(&title))
         .await?;
+
+    print_git_summary(docker, &container_id).await;
+    print_egress_log(docker, &container_id, cfg).await;
+    print_cost_estimate(docker, &container_id, agent).await;
 
     drop(cleanup);
 
@@ -1227,6 +1377,14 @@ fn box_label(agent_display: &str, project_name: &str) -> String {
     format!("{agent_display} - {project_name}")
 }
 
+/// Emit an OSC 0 terminal title escape sequence directly to stdout.
+/// Called right before attach_interactive so the title persists into the session.
+fn set_terminal_title(title: &str) {
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(format!("\x1b]0;{title}\x07").as_bytes());
+    let _ = std::io::stdout().flush();
+}
+
 /// Resolve project_name: use explicit value if set, else folder basename.
 fn resolve_project_name(cfg_project_name: Option<&str>, host_folder: &Path) -> String {
     if let Some(name) = cfg_project_name.filter(|s| !s.trim().is_empty()) {
@@ -1257,8 +1415,190 @@ impl Drop for CleanupGuard<'_> {
                 } else {
                     eprintln!("Box stopped. Run `agentbox up` or `agentbox-tui` to reconnect.");
                 }
+                eprint!("\nPress ENTER to close window...");
+                let _ = std::io::stdin().read_line(&mut String::new());
             });
         });
+    }
+}
+
+/// Run before-hooks on the host. Returns error on first failure.
+fn run_before_hooks(hooks: &[String]) -> Result<(), EngineError> {
+    for cmd in hooks {
+        eprint!("[before-hook] {cmd}... ");
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .status();
+        match status {
+            Ok(s) if s.success() => eprintln!("ok."),
+            Ok(s) => {
+                let code = s.code().unwrap_or(-1);
+                eprintln!("failed (exit {code}).");
+                return Err(EngineError::HookFailed {
+                    cmd: cmd.clone(),
+                    code,
+                });
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return Err(EngineError::HookFailed {
+                    cmd: cmd.clone(),
+                    code: -1,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Drop guard: runs after-hooks and optional OS notification when the session ends.
+/// This fires even when the session returns an error.
+struct SessionEndGuard {
+    hooks: Vec<String>,
+    notifications: bool,
+}
+
+impl Drop for SessionEndGuard {
+    fn drop(&mut self) {
+        for cmd in &self.hooks {
+            eprint!("[after-hook] {cmd}... ");
+            match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .status()
+            {
+                Ok(s) if s.success() => eprintln!("ok."),
+                Ok(s) => eprintln!("failed (exit {}).", s.code().unwrap_or(-1)),
+                Err(e) => eprintln!("error: {e}"),
+            }
+        }
+        if self.notifications {
+            crate::notify::send_notification("Agentbox", "Agent session ended.");
+        }
+    }
+}
+
+/// Get a one-shot CPU/memory snapshot for a named container.
+pub async fn get_container_stats(
+    container_name: &str,
+) -> Result<crate::container::ContainerStats, EngineError> {
+    let docker = DockerBackend::connect()?;
+    let id = ContainerId(container_name.to_string());
+    Ok(docker.container_stats_once(&id).await?)
+}
+
+// ── Post-session summary helpers ──────────────────────────────────────────────
+
+/// Print git diff --stat after the session (best-effort; silently skips on error).
+async fn print_git_summary(docker: &DockerBackend, id: &ContainerId) {
+    let cmd = vec![
+        "sh".into(),
+        "-c".into(),
+        "test -d .git && git diff --stat HEAD 2>/dev/null; git status --short 2>/dev/null | head -20"
+            .into(),
+    ];
+    let Ok(result) = docker.exec_command(id, &cmd, &[]).await else {
+        return;
+    };
+    let output = String::from_utf8_lossy(&result.stdout);
+    let trimmed = output.trim();
+    if !trimmed.is_empty() {
+        eprintln!("\n─── git summary ───────────────────────────────────────");
+        eprintln!("{trimmed}");
+        eprintln!("───────────────────────────────────────────────────────");
+    }
+}
+
+/// Print dropped-packet counts from iptables when network: allowlist (best-effort).
+async fn print_egress_log(docker: &DockerBackend, id: &ContainerId, cfg: &BoxConfig) {
+    if cfg.network != NetworkMode::Allowlist {
+        return;
+    }
+    let cmd = vec!["iptables".into(), "-nL".into(), "OUTPUT".into(), "-v".into()];
+    let Ok(result) = docker.exec_command(id, &cmd, &[]).await else {
+        return;
+    };
+    let output = String::from_utf8_lossy(&result.stdout);
+    let (mut dropped_pkts, mut blocked_dests) = (0u64, std::collections::HashSet::new());
+    for line in output.lines() {
+        if line.contains("DROP") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(pkts) = parts.first().and_then(|s| s.parse::<u64>().ok()) {
+                dropped_pkts += pkts;
+            }
+            // destination IP is typically the 9th field in verbose iptables output
+            if parts.len() >= 9 {
+                let dest = parts[8];
+                if dest != "0.0.0.0/0" {
+                    blocked_dests.insert(dest.to_string());
+                }
+            }
+        }
+    }
+    if dropped_pkts > 0 || !blocked_dests.is_empty() {
+        eprintln!(
+            "Egress: {} packet(s) to {} destination(s) blocked.",
+            dropped_pkts,
+            blocked_dests.len()
+        );
+    }
+}
+
+/// Estimate and print session cost from in-container token logs (best-effort).
+async fn print_cost_estimate(
+    docker: &DockerBackend,
+    id: &ContainerId,
+    agent: &dyn crate::agents::AgentDef,
+) {
+    let Some(cost_cfg) = agent.cost_config() else {
+        return;
+    };
+    if cost_cfg.post_session_cmd.is_empty() {
+        return;
+    }
+    let Ok(result) = docker
+        .exec_command(id, &cost_cfg.post_session_cmd, &[])
+        .await
+    else {
+        return;
+    };
+    let output = String::from_utf8_lossy(&result.stdout);
+    let input_tokens = parse_token_field(&output, "input_tokens");
+    let output_tokens = parse_token_field(&output, "output_tokens");
+    if input_tokens == 0 && output_tokens == 0 {
+        return;
+    }
+    let cost_usd = (input_tokens as f64 / 1_000_000.0) * cost_cfg.input_per_1m
+        + (output_tokens as f64 / 1_000_000.0) * cost_cfg.output_per_1m;
+    eprintln!(
+        "Estimated cost: ${:.4} ({} input / {} output tokens)",
+        cost_usd,
+        format_tokens(input_tokens),
+        format_tokens(output_tokens),
+    );
+}
+
+/// Find the last occurrence of `"field":NNN` in `text` and parse the number.
+fn parse_token_field(text: &str, field: &str) -> u64 {
+    let needle = format!("\"{}\":", field);
+    text.rfind(&needle)
+        .and_then(|pos| {
+            let rest = &text[pos + needle.len()..];
+            rest.split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|n| n.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
     }
 }
 

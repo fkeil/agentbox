@@ -61,6 +61,11 @@ pub trait AgentDef: Send + Sync {
     fn daemon_config(&self) -> Option<&crate::manifest::DaemonConfig> {
         None
     }
+
+    /// Token pricing for estimating session cost, or None if unknown.
+    fn cost_config(&self) -> Option<&crate::manifest::CostConfig> {
+        None
+    }
 }
 
 /// Resolve an agent by ID. Searches `manifests_dir` first (if provided),

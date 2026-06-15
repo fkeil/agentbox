@@ -1,7 +1,9 @@
 use agentbox_core::{
-    config::Lifecycle, find_manifests_dir_pub, list_profiles, load_profile, remove_profile,
-    run_box_config, save_profile, Profile, ProfileError,
+    config::Lifecycle, export_profile_yaml, find_manifests_dir_pub, import_profile_yaml,
+    list_profiles, load_profile, remove_profile, run_box_config, save_profile, Profile,
+    ProfileError,
 };
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
 
@@ -23,6 +25,22 @@ pub enum ProfileCommand {
     Run(ProfileRunArgs),
     /// Save a box.yaml file as a named profile
     Save(ProfileSaveArgs),
+    /// Print a profile as a base64 string for sharing
+    Share {
+        /// Profile name to export
+        name: String,
+    },
+    /// Import a profile from a base64 string
+    Import {
+        /// Base64-encoded profile YAML (from `profile share`)
+        data: String,
+        /// Override the profile name after import
+        #[arg(long)]
+        name: Option<String>,
+        /// Overwrite an existing profile with the same name
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Args)]
@@ -69,6 +87,8 @@ pub async fn run(args: ProfileArgs) -> anyhow::Result<()> {
         ProfileCommand::Rm { name } => run_rm(&name),
         ProfileCommand::Run(args) => run_run(args).await,
         ProfileCommand::Save(args) => run_save(args),
+        ProfileCommand::Share { name } => run_share(&name),
+        ProfileCommand::Import { data, name, force } => run_import(&data, name.as_deref(), force),
     }
 }
 
@@ -150,5 +170,35 @@ fn run_save(args: ProfileSaveArgs) -> anyhow::Result<()> {
         other => anyhow::anyhow!("{other}"),
     })?;
     println!("Profile `{}` saved → {}", args.name, path.display());
+    Ok(())
+}
+
+fn run_share(name: &str) -> anyhow::Result<()> {
+    let yaml = export_profile_yaml(name).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let encoded = B64.encode(yaml.as_bytes());
+    println!("{encoded}");
+    eprintln!(
+        "\nShare this string with a colleague. They can import it with:\n  agentbox profile import <string>"
+    );
+    Ok(())
+}
+
+fn run_import(data: &str, name_override: Option<&str>, force: bool) -> anyhow::Result<()> {
+    let yaml_bytes = B64
+        .decode(data.trim())
+        .map_err(|e| anyhow::anyhow!("invalid base64: {e}"))?;
+    let yaml = std::str::from_utf8(&yaml_bytes)
+        .map_err(|e| anyhow::anyhow!("base64 content is not valid UTF-8: {e}"))?;
+    let path = import_profile_yaml(yaml, name_override, force).map_err(|e| match e {
+        ProfileError::AlreadyExists(n) => {
+            anyhow::anyhow!("profile `{n}` already exists; use --force to overwrite")
+        }
+        other => anyhow::anyhow!("{other}"),
+    })?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("<unknown>");
+    println!("Profile `{stem}` imported → {}", path.display());
     Ok(())
 }

@@ -16,7 +16,7 @@
 
 Agentbox spins up an isolated container (Docker or Podman), installs your chosen AI coding agent inside it, and mounts a single host folder as the agent's only view of the filesystem. The agent cannot reach anything outside that folder or outside its allowed network endpoints. When the session ends, you review a diff and approve exactly what gets written back.
 
-Three frontends, one engine: a scriptable **CLI**, a keyboard-driven **TUI**, and a desktop **GUI**.
+Four interfaces, one engine: a scriptable **CLI**, a keyboard-driven **TUI**, a desktop **GUI**, and a **web dashboard** (`agentbox serve`).
 
 ---
 
@@ -26,7 +26,9 @@ Three frontends, one engine: a scriptable **CLI**, a keyboard-driven **TUI**, an
 # 1. Build
 cargo build --release -p agentbox-cli
 
-# 2. Create a box config
+# 2. Generate a config interactively (recommended)
+./target/release/agentbox init
+# — or create one manually:
 cat > box.yaml << 'EOF'
 agent: claude-code
 folder:
@@ -59,7 +61,16 @@ First run pulls the base image and installs the agent (~1–2 min). Subsequent r
 - **Persistent boxes** — Named containers with state volumes survive across sessions
 - **Docker or Podman** — auto-detected; pin with `backend: docker` / `backend: podman` in `box.yaml`
 - **OAuth support** — In-container device-code flow; token cached in a named volume
-- **CLI / TUI / GUI** — Same engine, pick your interface
+- **Pre/post hooks** — Shell commands run on the host before/after each session
+- **Extra mounts** — Additional host folders mounted read-only (or read-write) into the container
+- **Remote boxes** — `--remote ssh://user@host` or `remote:` in `box.yaml` to run on a remote Docker host
+- **Multi-box launch** — `agentbox up --config a.yaml --config b.yaml` to run several boxes in sequence
+- **Web dashboard** — `agentbox serve` starts a REST API + browser UI on `localhost:7070`
+- **Cloud sync** — `agentbox sync push/pull` backs up state volumes to any rclone remote (S3, GCS, SFTP, …)
+- **Profile sharing** — `agentbox profile share/import` exports/imports profiles as base64 one-liners
+- **Post-session summary** — git diff, egress log, and cost estimate printed after each session
+- **OS notifications** — Desktop notification on session end (opt-in via `notifications: true`)
+- **CLI / TUI / GUI / Web** — Same engine, pick your interface; terminal resizes propagate live
 
 ---
 

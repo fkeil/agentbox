@@ -207,6 +207,10 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
         resources: agentbox_core::config::ResourceConfig::default(),
         extra_env: std::collections::HashMap::new(),
         backend: agentbox_core::config::BackendChoice::Auto,
+        hooks: Default::default(),
+        extra_mounts: vec![],
+        notifications: false,
+        remote: None,
     };
 
     let yaml = serde_yaml::to_string(&box_cfg).map_err(|e| e.to_string())?;

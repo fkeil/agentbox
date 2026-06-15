@@ -30,6 +30,12 @@ enum Command {
     Profile(commands::profile::ProfileArgs),
     /// Manage user-installed agent manifests
     Manifest(commands::manifest_cmd::ManifestArgs),
+    /// Generate a new box.yaml interactively
+    Init(commands::init::InitArgs),
+    /// Start a local REST API + dashboard server
+    Serve(commands::serve::ServeArgs),
+    /// Push or pull a box's state volume to/from a cloud remote (via rclone)
+    Sync(commands::sync_cmd::SyncArgs),
 }
 
 fn print_banner() {
@@ -106,6 +112,9 @@ async fn main() {
         Command::Agents(args) => commands::agents::run(args).await,
         Command::Profile(args) => commands::profile::run(args).await,
         Command::Manifest(args) => commands::manifest_cmd::run(args).await,
+        Command::Init(args) => commands::init::run(args).await,
+        Command::Serve(args) => commands::serve::run(args).await,
+        Command::Sync(args) => commands::sync_cmd::run(args).await,
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");

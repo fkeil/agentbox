@@ -132,6 +132,10 @@ impl AgentDef for ManifestAgentDef {
     fn daemon_config(&self) -> Option<&crate::manifest::DaemonConfig> {
         self.manifest.daemon.as_ref()
     }
+
+    fn cost_config(&self) -> Option<&crate::manifest::CostConfig> {
+        self.manifest.cost.as_ref()
+    }
 }
 
 /// Substitute `{{var}}` placeholders in a template string.
