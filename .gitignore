@@ -1,2 +1,7 @@
 /target/
 /Cargo.lock
+gui/src-tauri/target/
+gui/src-tauri/gen/
+gui/brotli-patch/Cargo.lock
+yes
+yes.pub
