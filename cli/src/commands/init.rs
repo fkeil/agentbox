@@ -145,7 +145,10 @@ fn prompt(question: &str, default: &str) -> anyhow::Result<String> {
     io::stdin()
         .read_line(&mut line)
         .context("failed to read stdin")?;
-    let line = line.trim_end_matches('\n').trim_end_matches('\r').to_string();
+    let line = line
+        .trim_end_matches('\n')
+        .trim_end_matches('\r')
+        .to_string();
     if line.is_empty() {
         Ok(default.to_string())
     } else {
@@ -165,9 +168,7 @@ fn build_yaml(
     base_url: Option<&str>,
     auth: &str,
 ) -> String {
-    let mut lines = vec![
-        format!("agent: {agent}"),
-    ];
+    let mut lines = vec![format!("agent: {agent}")];
     if let Some(name) = box_name {
         lines.push(format!("name: {name}"));
     }

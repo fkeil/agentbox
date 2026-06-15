@@ -32,9 +32,7 @@ pub async fn run(args: UpArgs) -> anyhow::Result<()> {
     if args.config.len() == 1 {
         agentbox_core::run_box(&args.config[0])
             .await
-            .with_context(|| {
-                format!("failed to run box from `{}`", args.config[0].display())
-            })
+            .with_context(|| format!("failed to run box from `{}`", args.config[0].display()))
     } else {
         // Multi-box: run sequentially; interactive sessions cannot share the terminal.
         let total = args.config.len();

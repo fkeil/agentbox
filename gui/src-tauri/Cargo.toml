@@ -2,7 +2,7 @@
 
 [package]
 name = "agentbox-gui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # This crate is NOT a workspace member — it requires system packages that may

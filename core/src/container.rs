@@ -933,11 +933,11 @@ impl DockerBackend {
             .cpu_usage
             .total_usage
             .saturating_sub(s.precpu_stats.cpu_usage.total_usage) as f64;
-        let sys_delta = s
-            .cpu_stats
-            .system_cpu_usage
-            .unwrap_or(0)
-            .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0)) as f64;
+        let sys_delta =
+            s.cpu_stats
+                .system_cpu_usage
+                .unwrap_or(0)
+                .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0)) as f64;
         let num_cpus = s.cpu_stats.online_cpus.unwrap_or(1) as f64;
 
         let cpu_pct = if sys_delta > 0.0 {
@@ -1031,7 +1031,13 @@ async fn resize_loop(client: bollard::Docker, exec_id: String) {
         if current != last_size {
             if let Some((cols, rows)) = current {
                 let _ = client
-                    .resize_exec(&exec_id, ResizeExecOptions { height: rows, width: cols })
+                    .resize_exec(
+                        &exec_id,
+                        ResizeExecOptions {
+                            height: rows,
+                            width: cols,
+                        },
+                    )
                     .await;
             }
             last_size = current;

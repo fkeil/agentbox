@@ -197,7 +197,8 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
             model: config.provider.model,
             base_url: config.provider.base_url,
             auth: config.provider.auth,
-            raw: config.pi_models_json
+            raw: config
+                .pi_models_json
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .and_then(|s| serde_json::from_str(s).ok())
@@ -300,8 +301,7 @@ fn find_agentbox_bin() -> String {
 #[tauri::command]
 async fn get_snapshot_diff(host_folder: String) -> Option<Vec<FileDiffDto>> {
     let folder = PathBuf::from(host_folder);
-    agentbox_core::load_diff(&folder)
-        .map(|diffs| diffs.into_iter().map(Into::into).collect())
+    agentbox_core::load_diff(&folder).map(|diffs| diffs.into_iter().map(Into::into).collect())
 }
 
 /// Apply approved changes from the snapshot diff back to the host directory.
@@ -310,12 +310,9 @@ async fn apply_snapshot_changes(
     host_folder: String,
     approved_paths: Vec<String>,
 ) -> Result<(), String> {
-    agentbox_core::apply_snapshot_diff(
-        std::path::Path::new(&host_folder),
-        &approved_paths,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    agentbox_core::apply_snapshot_diff(std::path::Path::new(&host_folder), &approved_paths)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
