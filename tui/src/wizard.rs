@@ -768,8 +768,7 @@ fn event_loop(
                     .filter(|b| b.status == ContainerStatus::Running && !b.is_daemon)
                 {
                     let name = format!("agentbox-{}", b.box_name);
-                    app.detail_stats =
-                        do_async(agentbox_core::get_container_stats(&name)).ok();
+                    app.detail_stats = do_async(agentbox_core::get_container_stats(&name)).ok();
                 }
             }
         } else {

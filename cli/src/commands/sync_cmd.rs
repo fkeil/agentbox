@@ -38,9 +38,7 @@ fn require_tool(name: &str, install_url: &str) -> anyhow::Result<()> {
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !found {
-        anyhow::bail!(
-            "`{name}` not found in PATH. Install it from {install_url} and run again."
-        );
+        anyhow::bail!("`{name}` not found in PATH. Install it from {install_url} and run again.");
     }
     Ok(())
 }
@@ -62,9 +60,8 @@ fn push(box_name: &str, remote: &str) -> anyhow::Result<()> {
     let dest = format!("{remote}/{box_name}.tar.gz");
     eprintln!("Pushing state volume `{volume}` → `{dest}` …");
 
-    let cmd = format!(
-        "docker run --rm -v {volume}:/vol alpine tar czf - -C /vol . | rclone rcat {dest}"
-    );
+    let cmd =
+        format!("docker run --rm -v {volume}:/vol alpine tar czf - -C /vol . | rclone rcat {dest}");
     run_shell(&cmd)?;
     eprintln!("Push complete.");
     Ok(())
@@ -84,9 +81,8 @@ fn pull(box_name: &str, remote: &str) -> anyhow::Result<()> {
         anyhow::bail!("docker volume create failed");
     }
 
-    let cmd = format!(
-        "rclone cat {src} | docker run --rm -i -v {volume}:/vol alpine tar xzf - -C /vol"
-    );
+    let cmd =
+        format!("rclone cat {src} | docker run --rm -i -v {volume}:/vol alpine tar xzf - -C /vol");
     run_shell(&cmd)?;
     eprintln!("Pull complete: volume `{volume}` restored.");
     Ok(())

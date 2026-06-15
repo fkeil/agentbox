@@ -114,7 +114,11 @@ pub async fn dry_run_box(config_path: &Path) -> Result<(), EngineError> {
         if r == "none" || r == "oauth" {
             r.clone()
         } else if let Some(name) = r.strip_prefix("${env:").and_then(|s| s.strip_suffix('}')) {
-            let status = if std::env::var(name).is_ok() { "set" } else { "NOT SET" };
+            let status = if std::env::var(name).is_ok() {
+                "set"
+            } else {
+                "NOT SET"
+            };
             format!("{r} ({status})")
         } else {
             r.clone()
@@ -131,7 +135,11 @@ pub async fn dry_run_box(config_path: &Path) -> Result<(), EngineError> {
         })?;
 
     println!("─── dry-run — no containers will be created ───────────");
-    println!("  agent        : {} ({})", cfg.agent.0, agent.display_name());
+    println!(
+        "  agent        : {} ({})",
+        cfg.agent.0,
+        agent.display_name()
+    );
     println!("  folder       : {}", host_folder.display());
     println!("  sync         : {:?}", cfg.folder.sync);
     println!("  lifecycle    : {:?}", cfg.lifecycle);
@@ -461,7 +469,9 @@ pub async fn attach_box(box_name: &str) -> Result<(), EngineError> {
     eprintln!("Attaching to box '{box_name}'...");
     let title = box_label(agent_display, &project);
     set_terminal_title(&title);
-    let exit_code = docker.attach_interactive(&id, &launch_cmd, workdir, Some(&title)).await?;
+    let exit_code = docker
+        .attach_interactive(&id, &launch_cmd, workdir, Some(&title))
+        .await?;
 
     docker.stop_container(&id).await.ok();
     eprintln!("Box stopped. State preserved.");
@@ -810,7 +820,8 @@ async fn run_persistent(
         }
         // Always refresh the agent config in case provider settings changed.
         write_agent_config(docker, &id, agent, &cfg.provider, resolved_key).await?;
-        let project = resolve_project_name(cfg.project_name.as_deref(), Path::new(&host_folder_str));
+        let project =
+            resolve_project_name(cfg.project_name.as_deref(), Path::new(&host_folder_str));
         let title = box_label(agent.display_name(), &project);
         eprintln!("Reconnecting to box '{box_name}'...");
         set_terminal_title(&title);
@@ -1426,10 +1437,7 @@ impl Drop for CleanupGuard<'_> {
 fn run_before_hooks(hooks: &[String]) -> Result<(), EngineError> {
     for cmd in hooks {
         eprint!("[before-hook] {cmd}... ");
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .status();
+        let status = std::process::Command::new("sh").arg("-c").arg(cmd).status();
         match status {
             Ok(s) if s.success() => eprintln!("ok."),
             Ok(s) => {
@@ -1463,11 +1471,7 @@ impl Drop for SessionEndGuard {
     fn drop(&mut self) {
         for cmd in &self.hooks {
             eprint!("[after-hook] {cmd}... ");
-            match std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .status()
-            {
+            match std::process::Command::new("sh").arg("-c").arg(cmd).status() {
                 Ok(s) if s.success() => eprintln!("ok."),
                 Ok(s) => eprintln!("failed (exit {}).", s.code().unwrap_or(-1)),
                 Err(e) => eprintln!("error: {e}"),
@@ -1515,7 +1519,12 @@ async fn print_egress_log(docker: &DockerBackend, id: &ContainerId, cfg: &BoxCon
     if cfg.network != NetworkMode::Allowlist {
         return;
     }
-    let cmd = vec!["iptables".into(), "-nL".into(), "OUTPUT".into(), "-v".into()];
+    let cmd = vec![
+        "iptables".into(),
+        "-nL".into(),
+        "OUTPUT".into(),
+        "-v".into(),
+    ];
     let Ok(result) = docker.exec_command(id, &cmd, &[]).await else {
         return;
     };
