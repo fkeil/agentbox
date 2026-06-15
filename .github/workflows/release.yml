@@ -129,7 +129,24 @@ jobs:
           path: release-artifacts
 
       - name: Create release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           files: release-artifacts/**
           generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Wait after rate limit
+        if: steps.create_release.outcome == 'failure'
+        run: |
+          echo "Rate limit hit, waiting 90 seconds before retry..."
+          sleep 90
+
+      - name: Retry create release
+        if: steps.create_release.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -212,7 +212,6 @@ provider:
 
     #[test]
     fn allowlist_mode_passes_validation() {
-        // Build the config directly so folder.path uses a real cross-platform temp dir.
         let mut cfg: BoxConfig = serde_yaml::from_str(
             r#"
 agent: claude-code
@@ -229,7 +228,6 @@ network: allowlist
         .unwrap();
         cfg.folder.path = std::env::temp_dir();
         assert_eq!(cfg.network, NetworkMode::Allowlist);
-        // validate_config only errors on missing folder/name — network mode is now unrestricted.
         assert!(validate_config(&cfg).is_ok());
     }
 
