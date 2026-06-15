@@ -251,7 +251,6 @@ impl DockerBackend {
                     }
                 }
                 // Fall back to Docker defaults (will produce a clear error at first API call).
-                // On Windows this is the first stop: Docker Desktop uses a named pipe.
                 tracing::debug!("no socket found; attempting Docker defaults");
                 Self::connect_with_backend(&BackendChoice::Docker)
             }
