@@ -6,7 +6,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-cli-tui:
@@ -34,7 +33,7 @@ jobs:
             artifact: windows-x86_64
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v6.0.3
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -46,7 +45,7 @@ jobs:
         run: sudo apt-get install -y musl-tools
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.1
 
       - name: Build release binaries
         run: cargo build --release --workspace --target ${{ matrix.target }}
@@ -60,7 +59,7 @@ jobs:
           cd dist && tar czf ../agentbox-${{ matrix.artifact }}.tar.gz .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: agentbox-${{ matrix.artifact }}
           path: agentbox-${{ matrix.artifact }}.tar.gz
@@ -80,7 +79,7 @@ jobs:
             artifact: gui-windows
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v6.0.3
 
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
@@ -100,7 +99,7 @@ jobs:
         run: cargo install tauri-cli --locked
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: "gui/src-tauri -> target"
 
@@ -109,7 +108,7 @@ jobs:
         run: cargo tauri build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: agentbox-${{ matrix.artifact }}
           path: gui/src-tauri/target/release/bundle/
@@ -121,16 +120,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v6.0.3
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           path: release-artifacts
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
           files: release-artifacts/**
           generate_release_notes: true
@@ -145,7 +144,7 @@ jobs:
 
       - name: Retry create release
         if: steps.create_release.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
           files: release-artifacts/**
           generate_release_notes: true
