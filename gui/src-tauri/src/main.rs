@@ -415,7 +415,9 @@ fn main() {
         .setup(|app| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
+                if let Some(icon) = app.default_window_icon() {
+                    window.set_icon(icon.clone()).ok();
+                }
             }
             Ok(())
         })
