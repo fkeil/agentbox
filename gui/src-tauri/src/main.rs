@@ -81,6 +81,23 @@ impl From<agentbox_core::FileDiff> for FileDiffDto {
     }
 }
 
+#[derive(Serialize)]
+struct ProfileDto {
+    name: String,
+    agent: String,
+    provider_name: String,
+    provider_type: String,
+    model: String,
+}
+
+#[derive(Serialize)]
+struct ManifestEntryDto {
+    id: String,
+    display_name: String,
+    source: String,
+    is_daemon: bool,
+}
+
 #[derive(Deserialize)]
 struct ProviderInput {
     name: String,
@@ -102,6 +119,13 @@ struct BoxConfigInput {
     provider: ProviderInput,
     /// Pi-specific: full models.json content as a JSON string (optional)
     pi_models_json: Option<String>,
+    /// "open", "block-local", "provider-only", or "custom"
+    #[serde(default)]
+    egress_preset: String,
+    #[serde(default)]
+    egress_allow: Vec<String>,
+    #[serde(default)]
+    egress_deny: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -182,6 +206,24 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
 
     let folder_path = PathBuf::from(&config.folder);
 
+    let egress = match config.egress_preset.as_str() {
+        "block-local" => agentbox_core::config::EgressConfig {
+            deny: vec!["local-network".into()],
+            ..Default::default()
+        },
+        "provider-only" => agentbox_core::config::EgressConfig {
+            default: agentbox_core::config::EgressPolicy::Deny,
+            allow: vec!["provider".into(), "host".into()],
+            ..Default::default()
+        },
+        "custom" => agentbox_core::config::EgressConfig {
+            allow: config.egress_allow.clone(),
+            deny: config.egress_deny.clone(),
+            ..Default::default()
+        },
+        _ => agentbox_core::config::EgressConfig::default(), // open
+    };
+
     let box_cfg = agentbox_core::config::BoxConfig {
         agent: agentbox_core::config::AgentId(config.agent),
         name: config.name,
@@ -205,6 +247,7 @@ async fn prepare_launch(config: BoxConfigInput) -> Result<LaunchInfo, String> {
                 .unwrap_or(serde_json::Value::Null),
         },
         network: agentbox_core::config::NetworkMode::Open,
+        egress,
         resources: agentbox_core::config::ResourceConfig::default(),
         extra_env: std::collections::HashMap::new(),
         backend: agentbox_core::config::BackendChoice::Auto,
@@ -351,6 +394,101 @@ async fn remove_cache_image(agent_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Remove every agentbox cache image.
+#[tauri::command]
+async fn prune_cache_images() -> Result<usize, String> {
+    let images = agentbox_core::list_cache_images()
+        .await
+        .map_err(|e| e.to_string())?;
+    let count = images.len();
+    for img in &images {
+        agentbox_core::remove_cache_image(&img.agent_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(count)
+}
+
+/// List saved profiles.
+#[tauri::command]
+async fn list_profiles_cmd() -> Vec<ProfileDto> {
+    agentbox_core::list_profiles()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| ProfileDto {
+            name: p.name,
+            agent: p.agent,
+            provider_name: p.provider.name,
+            provider_type: format!("{:?}", p.provider.provider_type).to_lowercase(),
+            model: p.provider.model,
+        })
+        .collect()
+}
+
+/// Open a terminal running `agentbox profile run <name> --folder <folder>`.
+#[tauri::command]
+async fn run_profile_terminal(
+    name: String,
+    folder: String,
+    title: Option<String>,
+) -> Result<(), String> {
+    let bin = find_agentbox_bin();
+    let title_esc = title
+        .as_deref()
+        .map(|t| format!("printf \"\\033]0;{}\\007\"; ", t.replace('"', "\\\"")))
+        .unwrap_or_default();
+    let cmd = format!("{title_esc}'{bin}' profile run '{name}' --folder '{folder}'");
+    launch_terminal(&cmd).map_err(|e| e.to_string())
+}
+
+/// List all manifests (bundled + user-installed).
+#[tauri::command]
+async fn list_manifests_cmd() -> Vec<ManifestEntryDto> {
+    use agentbox_core::manifest;
+    let manifests_dir = find_manifests_dir();
+
+    let mut entries: Vec<ManifestEntryDto> = manifests_dir
+        .as_ref()
+        .map(|d| manifest::list_manifests_meta(d))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| ManifestEntryDto {
+            id: m.id,
+            display_name: m.display_name,
+            source: "bundled".into(),
+            is_daemon: m.is_daemon,
+        })
+        .collect();
+
+    let user: Vec<ManifestEntryDto> = agentbox_core::list_user_manifests()
+        .into_iter()
+        .map(|m| ManifestEntryDto {
+            id: m.id,
+            display_name: m.display_name,
+            source: "user".into(),
+            is_daemon: false,
+        })
+        .collect();
+
+    entries.extend(user);
+    entries
+}
+
+/// Install a manifest from a URL or local path.
+#[tauri::command]
+async fn add_manifest_cmd(source: String) -> Result<String, String> {
+    let (id, _path) = agentbox_core::add_manifest(&source, false)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// Remove a user-installed manifest by agent id.
+#[tauri::command]
+async fn remove_manifest_cmd(id: String) -> Result<(), String> {
+    agentbox_core::remove_manifest(&id).map_err(|e| e.to_string())
+}
+
 // ── Terminal launcher ─────────────────────────────────────────────────────────
 
 fn launch_terminal(cmd: &str) -> std::io::Result<()> {
@@ -437,6 +575,12 @@ fn main() {
             kill_box,
             list_cache_images,
             remove_cache_image,
+            prune_cache_images,
+            list_profiles_cmd,
+            run_profile_terminal,
+            list_manifests_cmd,
+            add_manifest_cmd,
+            remove_manifest_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentbox GUI");

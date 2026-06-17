@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::agents::{self, AgentError};
 use crate::auth::AuthError;
-use crate::config::{self, BoxConfig, ConfigError, Lifecycle, NetworkMode, ProviderType, SyncMode};
+use crate::config::{
+    self, BoxConfig, ConfigError, EgressPolicy, Lifecycle, NetworkMode, ProviderType, SyncMode,
+};
 use crate::container::{
     BoxInfo, ContainerBackend, ContainerError, ContainerId, ContainerSpec, ContainerStatus,
     DockerBackend,
@@ -156,6 +158,17 @@ pub async fn dry_run_box(config_path: &Path) -> Result<(), EngineError> {
     }
     println!("  auth         : {auth_display}");
     println!("  network      : {:?}", cfg.network);
+    if !cfg.egress.is_unrestricted() {
+        println!("  egress default: {:?}", cfg.egress.default);
+        if !cfg.egress.deny.is_empty() {
+            println!("  egress deny  : {}", cfg.egress.deny.join(", "));
+        }
+        if !cfg.egress.allow.is_empty() {
+            println!("  egress allow : {}", cfg.egress.allow.join(", "));
+        }
+    } else {
+        println!("  egress       : open");
+    }
     println!("  backend      : {:?}", cfg.backend);
     if !cfg.extra_mounts.is_empty() {
         println!("  extra mounts :");
@@ -1221,29 +1234,70 @@ async fn run_healthcheck(
     Ok(())
 }
 
-/// Return `["NET_ADMIN"]` when the box uses the egress allowlist, else empty.
+/// Return `["NET_ADMIN"]` when egress filtering is active (new egress config or legacy allowlist).
 fn allowlist_caps(cfg: &BoxConfig) -> Vec<String> {
-    if cfg.network == NetworkMode::Allowlist {
+    if !cfg.egress.is_unrestricted() || cfg.network == NetworkMode::Allowlist {
         vec!["NET_ADMIN".to_string()]
     } else {
         vec![]
     }
 }
 
-/// Apply egress iptables rules inside the container when `network: allowlist`.
-/// This is a no-op for `network: open`.
+/// Expand a named preset to the concrete hosts/CIDRs it represents.
+fn expand_preset(name: &str, cfg: &BoxConfig) -> Vec<String> {
+    match name {
+        "local-network" => vec![
+            "10.0.0.0/8".into(),
+            "172.16.0.0/12".into(),
+            "192.168.0.0/16".into(),
+            "127.0.0.0/8".into(),
+        ],
+        "host" => vec!["host.docker.internal".into()],
+        "internet" => vec!["0.0.0.0/0".into()],
+        "provider" => match cfg.provider.provider_type {
+            ProviderType::Anthropic => vec!["api.anthropic.com".into()],
+            ProviderType::Openai => vec!["api.openai.com".into()],
+            ProviderType::OpenaiCompatible => cfg
+                .provider
+                .base_url
+                .as_deref()
+                .and_then(extract_hostname)
+                .map(|h| vec![h.to_string()])
+                .unwrap_or_default(),
+        },
+        _ => vec![],
+    }
+}
+
+/// Expand a list of rule strings, substituting presets for their constituent entries.
+fn expand_rules(rules: &[String], cfg: &BoxConfig) -> Vec<String> {
+    rules
+        .iter()
+        .flat_map(|r| {
+            if ["local-network", "host", "internet", "provider"].contains(&r.as_str()) {
+                expand_preset(r, cfg)
+            } else {
+                vec![r.clone()]
+            }
+        })
+        .collect()
+}
+
+/// Apply egress iptables rules inside the container.
+/// No-op when egress config is unrestricted and legacy `network: allowlist` is not set.
 async fn apply_egress_allowlist(
     docker: &DockerBackend,
     id: &ContainerId,
     cfg: &BoxConfig,
 ) -> Result<(), EngineError> {
-    if cfg.network != NetworkMode::Allowlist {
+    // Legacy compat: `network: allowlist` with no egress block → provider-only allowlist.
+    let use_legacy = cfg.network == NetworkMode::Allowlist && cfg.egress.is_unrestricted();
+    if cfg.egress.is_unrestricted() && !use_legacy {
         return Ok(());
     }
 
-    eprintln!("Setting up egress allowlist...");
+    eprintln!("Setting up egress rules...");
 
-    // Install iptables in the container (Debian/Ubuntu base images).
     let install_result = docker
         .exec_command(
             id,
@@ -1262,15 +1316,24 @@ async fn apply_egress_allowlist(
         )));
     }
 
-    // Resolve allowed IPs from provider hostname.
-    let allowed_ips = tokio::task::spawn_blocking({
-        let cfg_clone = cfg.clone();
-        move || resolve_provider_ips(&cfg_clone)
-    })
-    .await
-    .unwrap_or_default();
+    let (deny_rules, allow_rules, default_deny) = if use_legacy {
+        // Legacy: allow provider + local networks, drop everything else.
+        let allow = expand_rules(
+            &[
+                "provider".to_string(),
+                "local-network".to_string(),
+            ],
+            cfg,
+        );
+        (vec![], allow, true)
+    } else {
+        let deny = expand_rules(&cfg.egress.deny, cfg);
+        let allow = expand_rules(&cfg.egress.allow, cfg);
+        let default_deny = cfg.egress.default == EgressPolicy::Deny;
+        (deny, allow, default_deny)
+    };
 
-    let script = build_allowlist_script(&allowed_ips);
+    let script = build_egress_script(&deny_rules, &allow_rules, default_deny);
     let result = docker
         .exec_command(id, &["sh".into(), "-c".into(), script], &[])
         .await?;
@@ -1282,41 +1345,12 @@ async fn apply_egress_allowlist(
     }
 
     eprintln!(
-        "Egress allowlist active ({} provider IP(s)).",
-        allowed_ips.len()
+        "Egress rules active ({} deny, {} allow, default: {}).",
+        deny_rules.len(),
+        allow_rules.len(),
+        if default_deny { "deny" } else { "allow" }
     );
     Ok(())
-}
-
-/// Resolve the provider's API hostname(s) to IP strings.
-fn resolve_provider_ips(cfg: &BoxConfig) -> Vec<String> {
-    use std::net::ToSocketAddrs;
-
-    let hostname = match cfg.provider.provider_type {
-        ProviderType::Anthropic => "api.anthropic.com".to_string(),
-        ProviderType::Openai => "api.openai.com".to_string(),
-        ProviderType::OpenaiCompatible => cfg
-            .provider
-            .base_url
-            .as_deref()
-            .and_then(extract_hostname)
-            .unwrap_or_default()
-            .to_string(),
-    };
-
-    if hostname.is_empty() {
-        return vec![];
-    }
-
-    // Skip resolution for local/private addresses — the Docker network rule already covers them.
-    if hostname == "host.docker.internal" || hostname == "localhost" || hostname == "127.0.0.1" {
-        return vec![];
-    }
-
-    format!("{hostname}:443")
-        .to_socket_addrs()
-        .map(|iter| iter.map(|s| s.ip().to_string()).collect())
-        .unwrap_or_default()
 }
 
 fn extract_hostname(url: &str) -> Option<&str> {
@@ -1328,24 +1362,56 @@ fn extract_hostname(url: &str) -> Option<&str> {
     Some(host.split(':').next().unwrap_or(host))
 }
 
-/// Build the shell script that applies DROP-by-default egress iptables rules.
-fn build_allowlist_script(allowed_ips: &[String]) -> String {
-    let mut rules: Vec<String> = vec![
-        "iptables -F OUTPUT 2>/dev/null || true".into(),
-        "iptables -A OUTPUT -o lo -j ACCEPT".into(),
-        "iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT".into(),
-        "iptables -A OUTPUT -p udp --dport 53 -j ACCEPT".into(),
-        "iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT".into(),
-        // Docker bridge networks (host gateway for local providers)
-        "iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT".into(),
-        "iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT".into(),
-        "iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT".into(),
-    ];
-    for ip in allowed_ips {
-        rules.push(format!("iptables -A OUTPUT -d {ip} -j ACCEPT"));
+/// Build the shell script that applies egress iptables rules inside the container.
+/// Deny rules are applied first (deny wins). Baseline rules always allow loopback and DNS.
+fn build_egress_script(deny_rules: &[String], allow_rules: &[String], default_deny: bool) -> String {
+    let mut s = String::new();
+    s.push_str("iptables -F OUTPUT 2>/dev/null || true\n");
+    s.push_str("iptables -A OUTPUT -o lo -j ACCEPT\n");
+    s.push_str("iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n");
+    s.push_str("iptables -A OUTPUT -p udp --dport 53 -j ACCEPT\n");
+    s.push_str("iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT\n");
+    // Helper: resolve a hostname/wildcard to IPs using getent.
+    s.push_str("resolve_hosts() {\n");
+    s.push_str("  local r=\"$1\"\n");
+    s.push_str("  case \"$r\" in\n");
+    s.push_str("    \\*.*)\n");
+    s.push_str("      local b=\"${r#\\*.}\"\n");
+    s.push_str("      getent hosts \"$b\" 2>/dev/null | awk '{print $1}'\n");
+    s.push_str("      getent hosts \"api.$b\" 2>/dev/null | awk '{print $1}'\n");
+    s.push_str("      getent hosts \"cdn.$b\" 2>/dev/null | awk '{print $1}'\n");
+    s.push_str("      ;;\n");
+    s.push_str("    *) getent hosts \"$r\" 2>/dev/null | awk '{print $1}' ;;\n");
+    s.push_str("  esac\n");
+    s.push_str("}\n");
+    // add_rule ACTION TARGET — CIDR/IP direct; hostname resolved via getent.
+    s.push_str("add_rule() {\n");
+    s.push_str("  local action=\"$1\" target=\"$2\"\n");
+    s.push_str("  case \"$target\" in\n");
+    s.push_str("    */*|[0-9]*.[0-9]*.[0-9]*.[0-9]*|*:*:*)\n");
+    s.push_str("      iptables -A OUTPUT -d \"$target\" -j \"$action\" 2>/dev/null || true\n");
+    s.push_str("      ;;\n");
+    s.push_str("    *)\n");
+    s.push_str("      for ip in $(resolve_hosts \"$target\"); do\n");
+    s.push_str("        [ -n \"$ip\" ] && iptables -A OUTPUT -d \"$ip\" -j \"$action\" 2>/dev/null || true\n");
+    s.push_str("      done\n");
+    s.push_str("      ;;\n");
+    s.push_str("  esac\n");
+    s.push_str("}\n");
+    // Deny rules first (deny wins over allow).
+    for rule in deny_rules {
+        let safe = rule.replace('\'', r"'\''");
+        s.push_str(&format!("add_rule DROP '{}'\n", safe));
     }
-    rules.push("iptables -A OUTPUT -j DROP".into());
-    rules.join("; ")
+    // Allow rules.
+    for rule in allow_rules {
+        let safe = rule.replace('\'', r"'\''");
+        s.push_str(&format!("add_rule ACCEPT '{}'\n", safe));
+    }
+    if default_deny {
+        s.push_str("iptables -A OUTPUT -j DROP\n");
+    }
+    s
 }
 
 fn host_gateway_hosts() -> Vec<String> {
@@ -1514,9 +1580,10 @@ async fn print_git_summary(docker: &DockerBackend, id: &ContainerId) {
     }
 }
 
-/// Print dropped-packet counts from iptables when network: allowlist (best-effort).
+/// Print dropped-packet counts from iptables when egress filtering is active (best-effort).
 async fn print_egress_log(docker: &DockerBackend, id: &ContainerId, cfg: &BoxConfig) {
-    if cfg.network != NetworkMode::Allowlist {
+    let active = !cfg.egress.is_unrestricted() || cfg.network == NetworkMode::Allowlist;
+    if !active {
         return;
     }
     let cmd = vec![

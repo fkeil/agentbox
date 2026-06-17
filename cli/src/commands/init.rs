@@ -101,6 +101,42 @@ pub async fn run(args: InitArgs) -> anyhow::Result<()> {
         }
     }
 
+    println!("\nEgress presets: open (default), block-local, provider-only, custom");
+    println!("  open          — unrestricted internet access (default)");
+    println!("  block-local   — deny access to 10.x, 172.16.x, 192.168.x");
+    println!("  provider-only — only allow the AI provider (deny everything else)");
+    println!("  custom        — specify allow/deny rules manually");
+    let egress_input = prompt("Egress profile", "open")?;
+    let egress_profile = egress_input.trim().to_lowercase();
+
+    struct EgressOpts {
+        default_deny: bool,
+        deny: Option<String>,
+        allow: Option<String>,
+    }
+    let egress = match egress_profile.as_str() {
+        "block-local" => EgressOpts {
+            default_deny: false,
+            deny: Some("local-network".to_string()),
+            allow: None,
+        },
+        "provider-only" => EgressOpts {
+            default_deny: true,
+            deny: None,
+            allow: Some("provider host".to_string()),
+        },
+        "custom" => {
+            let deny_input = prompt("Deny rules (space-separated, e.g. local-network 8.8.8.8)", "")?;
+            let allow_input = prompt("Allow rules (space-separated, e.g. provider *.github.com)", "")?;
+            EgressOpts {
+                default_deny: false,
+                deny: if deny_input.trim().is_empty() { None } else { Some(deny_input.trim().to_string()) },
+                allow: if allow_input.trim().is_empty() { None } else { Some(allow_input.trim().to_string()) },
+            }
+        }
+        _ => EgressOpts { default_deny: false, deny: None, allow: None },
+    };
+
     let provider_name = provider_type.clone();
     let yaml = build_yaml(
         &agent,
@@ -112,6 +148,9 @@ pub async fn run(args: InitArgs) -> anyhow::Result<()> {
         &model,
         base_url.as_deref(),
         &auth,
+        egress.default_deny,
+        egress.deny.as_deref(),
+        egress.allow.as_deref(),
     );
 
     if args.output.exists() {
@@ -167,6 +206,9 @@ fn build_yaml(
     model: &str,
     base_url: Option<&str>,
     auth: &str,
+    egress_default_deny: bool,
+    egress_deny: Option<&str>,
+    egress_allow: Option<&str>,
 ) -> String {
     let mut lines = vec![format!("agent: {agent}")];
     if let Some(name) = box_name {
@@ -185,6 +227,26 @@ fn build_yaml(
         lines.push(format!("  base_url: {url}"));
     }
     lines.push(format!("  auth: {auth}"));
+    // Only emit egress block when non-default.
+    if egress_default_deny || egress_deny.is_some() || egress_allow.is_some() {
+        lines.push(String::new());
+        lines.push("egress:".to_string());
+        if egress_default_deny {
+            lines.push("  default: deny".to_string());
+        }
+        if let Some(deny) = egress_deny {
+            lines.push("  deny:".to_string());
+            for rule in deny.split_whitespace() {
+                lines.push(format!("    - {rule}"));
+            }
+        }
+        if let Some(allow) = egress_allow {
+            lines.push("  allow:".to_string());
+            for rule in allow.split_whitespace() {
+                lines.push(format!("    - {rule}"));
+            }
+        }
+    }
     lines.push(String::new());
     lines.join("\n")
 }

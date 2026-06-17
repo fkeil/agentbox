@@ -25,6 +25,7 @@ const state = {
   lifecycle: 'ephemeral',
   boxName: '',
   sync: 'mount',
+  egress: { preset: 'open', allow: '', deny: '' },
   piModelsJson: '',
   provider: {
     name: 'anthropic',
@@ -162,6 +163,120 @@ async function loadImages() {
   }
 }
 
+async function pruneImages() {
+  if (!confirm('Remove ALL cache images?\n\nAgents will be reinstalled on next launch.')) return;
+  try {
+    const count = await invoke('prune_cache_images');
+    setStatus(`Pruned ${count} cache image(s).`);
+    loadImages();
+  } catch (e) {
+    alert(`Failed to prune images: ${e}`);
+  }
+}
+
+async function loadProfiles() {
+  const list = document.getElementById('profiles-list');
+  list.innerHTML = '<p class="hint">Loading…</p>';
+  try {
+    const profiles = await invoke('list_profiles_cmd');
+    if (profiles.length === 0) {
+      list.innerHTML = '<p class="hint">No profiles saved. Create one with: agentbox profile save &lt;name&gt; --from box.yaml</p>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const p of profiles) {
+      list.appendChild(makeProfileCard(p));
+    }
+  } catch (e) {
+    list.innerHTML = `<p class="hint" style="color:var(--red)">${e}</p>`;
+  }
+}
+
+function makeProfileCard(p) {
+  const card = document.createElement('div');
+  card.className = 'image-card';
+
+  const info = document.createElement('div');
+  info.className = 'image-card-info';
+  info.innerHTML = `
+    <div class="image-card-name">${esc(p.name)}</div>
+    <div class="image-card-meta">${esc(p.agent)} · ${esc(p.provider_name)} / ${esc(p.model)}</div>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'image-card-actions';
+  actions.appendChild(btn('Run', 'btn-primary btn-sm', async () => {
+    const folder = prompt(`Run profile "${p.name}"\n\nEnter workspace folder path:`);
+    if (!folder || !folder.trim()) return;
+    try {
+      await invoke('run_profile_terminal', { name: p.name, folder: folder.trim(), title: `${p.agent} — ${p.name}` });
+      setStatus(`Profile "${p.name}" started.`);
+    } catch (e) { alert(e); }
+  }));
+
+  card.append(info, actions);
+  return card;
+}
+
+async function loadManifests() {
+  const list = document.getElementById('manifests-list');
+  list.innerHTML = '<p class="hint">Loading…</p>';
+  try {
+    const entries = await invoke('list_manifests_cmd');
+    if (entries.length === 0) {
+      list.innerHTML = '<p class="hint">No manifests found. Add one with "+ Add".</p>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const m of entries) {
+      list.appendChild(makeManifestCard(m));
+    }
+  } catch (e) {
+    list.innerHTML = `<p class="hint" style="color:var(--red)">${e}</p>`;
+  }
+}
+
+function makeManifestCard(m) {
+  const card = document.createElement('div');
+  card.className = 'image-card';
+
+  const info = document.createElement('div');
+  info.className = 'image-card-info';
+  const daemonBadge = m.is_daemon ? ' <span style="font-size:10px;padding:2px 5px;border-radius:3px;background:var(--bg3);color:var(--text-dim)">daemon</span>' : '';
+  info.innerHTML = `
+    <div class="image-card-name">${esc(m.display_name)}${daemonBadge}</div>
+    <div class="image-card-meta">${esc(m.id)} · ${esc(m.source)}</div>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'image-card-actions';
+  if (m.source === 'user') {
+    actions.appendChild(btn('Remove', 'btn-danger btn-sm', async () => {
+      if (!confirm(`Remove user manifest "${m.id}"?`)) return;
+      try {
+        await invoke('remove_manifest_cmd', { id: m.id });
+        setStatus(`Manifest "${m.id}" removed.`);
+        loadManifests();
+      } catch (e) { alert(e); }
+    }));
+  }
+
+  card.append(info, actions);
+  return card;
+}
+
+async function addManifest() {
+  const source = prompt('Enter manifest URL (https://…) or local file path:');
+  if (!source || !source.trim()) return;
+  try {
+    const id = await invoke('add_manifest_cmd', { source: source.trim() });
+    setStatus(`Manifest "${id}" installed.`);
+    loadManifests();
+  } catch (e) {
+    alert(`Failed to add manifest: ${e}`);
+  }
+}
+
 function makeImageCard(img) {
   const card = document.createElement('div');
   card.className = 'image-card';
@@ -187,7 +302,7 @@ function makeImageCard(img) {
 
 // ── Wizard ────────────────────────────────────────────────────────────────────
 
-const STEPS = ['agent', 'folder', 'lifecycle', 'provider', 'summary'];
+const STEPS = ['agent', 'folder', 'lifecycle', 'egress', 'provider', 'summary'];
 
 async function startWizard() {
   state.step = 0;
@@ -197,6 +312,7 @@ async function startWizard() {
   state.lifecycle = 'ephemeral';
   state.boxName = '';
   state.sync = 'mount';
+  state.egress = { preset: 'open', allow: '', deny: '' };
   state.piModelsJson = '';
   state.provider = { name: 'anthropic', type: 'anthropic', model: 'claude-sonnet-4-6', base_url: '', auth: 'none' };
 
@@ -318,6 +434,50 @@ function renderWizardStep() {
     const bnInput = body.querySelector('#wiz-boxname');
     if (bnInput) bnInput.oninput = e => { state.boxName = e.target.value; };
 
+  } else if (step === 'egress') {
+    title.textContent = 'Network Egress';
+    const isCustom = state.egress.preset === 'custom';
+    const presets = [
+      { value: 'open',          label: 'Open',          desc: 'Unrestricted internet access (default)' },
+      { value: 'block-local',   label: 'Block local',   desc: 'Deny 10.x, 172.16.x, 192.168.x networks' },
+      { value: 'provider-only', label: 'Provider only', desc: 'Only allow the AI provider + host gateway (deny all else)' },
+      { value: 'custom',        label: 'Custom',        desc: 'Specify allow/deny rules manually' },
+    ];
+    body.innerHTML = `
+      <div class="form-group">
+        <label>Egress preset</label>
+        <div class="radio-group">
+          ${presets.map(p => `
+          <label class="radio-opt ${state.egress.preset === p.value ? 'selected' : ''}" id="opt-eg-${p.value}">
+            <input type="radio" name="egress-preset" value="${p.value}" ${state.egress.preset === p.value ? 'checked' : ''} />
+            <span class="opt-label">${esc(p.label)}</span>
+            <span class="opt-desc">${esc(p.desc)}</span>
+          </label>`).join('')}
+        </div>
+      </div>
+      <div id="egress-custom-group" style="${isCustom ? '' : 'display:none'}">
+        <div class="form-group">
+          <label>Deny rules <span style="color:var(--text-dim);font-weight:normal">(space or newline separated — IPs, CIDRs, hostnames, presets)</span></label>
+          <textarea id="wiz-eg-deny" rows="3" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'SF Mono',Consolas,monospace;font-size:12px;padding:8px 10px;outline:none;resize:vertical" placeholder="local-network 192.0.2.0/24">${esc(state.egress.deny)}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Allow rules <span style="color:var(--text-dim);font-weight:normal">(evaluated after deny; deny wins)</span></label>
+          <textarea id="wiz-eg-allow" rows="3" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'SF Mono',Consolas,monospace;font-size:12px;padding:8px 10px;outline:none;resize:vertical" placeholder="provider *.github.com">${esc(state.egress.allow)}</textarea>
+        </div>
+      </div>`;
+
+    body.querySelectorAll('input[name=egress-preset]').forEach(r => {
+      r.onchange = () => {
+        state.egress.preset = r.value;
+        presets.forEach(p => document.getElementById(`opt-eg-${p.value}`).classList.toggle('selected', state.egress.preset === p.value));
+        document.getElementById('egress-custom-group').style.display = state.egress.preset === 'custom' ? '' : 'none';
+      };
+    });
+    const denyEl = body.querySelector('#wiz-eg-deny');
+    const allowEl = body.querySelector('#wiz-eg-allow');
+    if (denyEl) denyEl.oninput = e => { state.egress.deny = e.target.value; };
+    if (allowEl) allowEl.oninput = e => { state.egress.allow = e.target.value; };
+
   } else if (step === 'provider') {
     title.textContent = 'Provider';
     const isCompat = state.provider.type === 'openai-compatible';
@@ -433,6 +593,7 @@ function renderWizardStep() {
         <tr><td>Lifecycle</td><td>${esc(state.lifecycle)}</td></tr>
         ${state.lifecycle === 'persistent' ? `<tr><td>Box name</td><td>${esc(state.boxName)}</td></tr>` : ''}
         <tr><td>Sync</td><td>${esc(state.sync)}</td></tr>
+        <tr><td>Egress</td><td>${esc(state.egress.preset)}</td></tr>
         <tr><td>Provider type</td><td>${esc(state.provider.type)}</td></tr>
         <tr><td>Model</td><td>${esc(state.provider.model)}</td></tr>
         ${state.provider.base_url ? `<tr><td>Base URL</td><td>${esc(state.provider.base_url)}</td></tr>` : ''}
@@ -482,6 +643,13 @@ async function launchBox() {
     folder: state.folder.trim(),
     lifecycle: state.lifecycle,
     sync: state.sync,
+    egress_preset: state.egress.preset,
+    egress_allow: state.egress.preset === 'custom'
+      ? state.egress.allow.trim().split(/[\s\n]+/).filter(Boolean)
+      : [],
+    egress_deny: state.egress.preset === 'custom'
+      ? state.egress.deny.trim().split(/[\s\n]+/).filter(Boolean)
+      : [],
     provider: {
       name: state.provider.name,
       type: state.provider.type,
@@ -654,6 +822,10 @@ document.getElementById('btn-theme').onclick = () => {
 document.getElementById('btn-new').onclick = startWizard;
 document.getElementById('btn-refresh').onclick = loadBoxes;
 document.getElementById('btn-refresh-images').onclick = loadImages;
+document.getElementById('btn-prune-images').onclick = pruneImages;
+document.getElementById('btn-refresh-profiles').onclick = loadProfiles;
+document.getElementById('btn-refresh-manifests').onclick = loadManifests;
+document.getElementById('btn-add-manifest').onclick = addManifest;
 document.getElementById('btn-wizard-back').onclick = () => { showView('view-home'); loadBoxes(); };
 document.getElementById('btn-wizard-next').onclick = wizardNext;
 document.getElementById('btn-wizard-prev').onclick = wizardPrev;
@@ -666,4 +838,6 @@ document.getElementById('btn-diff-discard').onclick = () => {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 loadBoxes();
+loadProfiles();
+loadManifests();
 _autoRefreshTimer = setInterval(loadBoxes, 3000);

@@ -17,6 +17,9 @@ pub struct BoxConfig {
     pub provider: ProviderConfig,
     #[serde(default)]
     pub network: NetworkMode,
+    /// Outbound network (egress) control. Replaces/extends the legacy `network: allowlist`.
+    #[serde(default)]
+    pub egress: EgressConfig,
     #[serde(default)]
     pub resources: ResourceConfig,
     /// Arbitrary extra env vars injected into the container. Values support
@@ -135,6 +138,39 @@ pub enum NetworkMode {
     #[default]
     Open,
     Allowlist,
+}
+
+/// Outbound network (egress) control for a box.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct EgressConfig {
+    /// Default action when no rule matches. Defaults to `allow`.
+    #[serde(default)]
+    pub default: EgressPolicy,
+    /// Destinations always permitted (evaluated after deny; deny wins).
+    /// Each entry: CIDR, IP, exact hostname, `*.wildcard`, or preset name.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Destinations always blocked.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl EgressConfig {
+    /// True when no egress filtering is configured (open network).
+    pub fn is_unrestricted(&self) -> bool {
+        self.allow.is_empty() && self.deny.is_empty() && self.default == EgressPolicy::Allow
+    }
+}
+
+/// Default action when no egress rule matches.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EgressPolicy {
+    /// Permit all traffic not explicitly denied (default).
+    #[default]
+    Allow,
+    /// Block all traffic not explicitly allowed.
+    Deny,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

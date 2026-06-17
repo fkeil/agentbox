@@ -270,6 +270,7 @@ impl Profile {
             lifecycle,
             provider: self.provider,
             network: self.network,
+            egress: crate::config::EgressConfig::default(),
             resources: self.resources,
             extra_env: self.extra_env,
             backend: self.backend,

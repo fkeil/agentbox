@@ -10,7 +10,7 @@ pub mod profile;
 pub mod provider;
 pub mod sync;
 
-pub use config::BackendChoice;
+pub use config::{BackendChoice, EgressConfig, EgressPolicy};
 pub use container::{BoxInfo, CacheImage, ContainerStats, ContainerStatus};
 pub use engine::{
     apply_snapshot_diff, attach_box, down_box, dry_run_box, find_manifests_dir_pub,

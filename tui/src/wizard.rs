@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use agentbox_core::config::{
-    AgentId, BoxConfig, FolderConfig, Lifecycle, NetworkMode, ProviderConfig, ProviderType,
-    ResourceConfig, SyncMode,
+    AgentId, BoxConfig, EgressConfig, EgressPolicy, FolderConfig, Lifecycle, NetworkMode,
+    ProviderConfig, ProviderType, ResourceConfig, SyncMode,
 };
 use agentbox_core::container::{BoxInfo, ContainerStatus};
 use agentbox_core::manifest;
@@ -154,6 +154,10 @@ pub enum WizardResult {
     Attach {
         box_name: String,
     },
+    RunProfile {
+        name: String,
+        folder: PathBuf,
+    },
 }
 
 pub fn run() -> anyhow::Result<WizardResult> {
@@ -180,9 +184,13 @@ enum Screen {
     Home,      // list existing boxes + "New box"
     BoxDetail, // manage a selected box
     Images,    // cached agent images
+    Profiles,  // saved profiles list
+    ProfileFolder, // folder input before running a profile
+    Manifests, // bundled + user manifests
     WizardAgent,
     WizardFolder,
     WizardLifecycle,
+    WizardEgress,   // network egress policy
     WizardProvider,
     WizardPiModels, // Pi-only: multi-model JSON config
     WizardSummary,
@@ -498,6 +506,30 @@ struct App {
     pi_models: MultilineInput,
     pi_models_err: Option<String>,
 
+    // Wizard — sync mode (lifecycle screen)
+    sync_mode_idx: usize, // 0=mount, 1=snapshot
+
+    // Wizard — egress (network step)
+    // Presets: 0=open, 1=block-local, 2=provider-only, 3=custom
+    egress_preset_idx: usize,
+    egress_custom_deny: Input,
+    egress_custom_allow: Input,
+    egress_custom_focus: usize, // 0=deny field, 1=allow field
+
+    // Profiles screen
+    profiles: Vec<agentbox_core::Profile>,
+    profiles_idx: usize,
+    profiles_list_state: ListState,
+    profile_run_name: String,
+    profile_folder: Input,
+
+    // Manifests screen
+    all_manifest_items: Vec<(String, String, bool)>, // (id, display_name, is_user)
+    manifests_idx: usize,
+    manifests_list_state: ListState,
+    manifest_add_mode: bool,
+    manifest_url: Input,
+
     // Status / error
     status_msg: Option<(String, bool)>, // (message, is_error)
 
@@ -593,6 +625,25 @@ impl App {
             pi_models: MultilineInput::new(""),
             pi_models_err: None,
 
+            sync_mode_idx: 0,
+
+            egress_preset_idx: 0,
+            egress_custom_deny: Input::new(""),
+            egress_custom_allow: Input::new(""),
+            egress_custom_focus: 0,
+
+            profiles: agentbox_core::list_profiles().unwrap_or_default(),
+            profiles_idx: 0,
+            profiles_list_state: ListState::default(),
+            profile_run_name: String::new(),
+            profile_folder: Input::new(""),
+
+            all_manifest_items: Vec::new(),
+            manifests_idx: 0,
+            manifests_list_state: ListState::default(),
+            manifest_add_mode: false,
+            manifest_url: Input::new(""),
+
             status_msg: None,
             manifests_dir,
 
@@ -630,6 +681,26 @@ impl App {
         self.selected_agent_id() == "pi"
     }
 
+    fn egress_config(&self) -> EgressConfig {
+        match self.egress_preset_idx {
+            1 => EgressConfig {
+                deny: vec!["local-network".into()],
+                ..Default::default()
+            },
+            2 => EgressConfig {
+                default: EgressPolicy::Deny,
+                allow: vec!["provider".into(), "host".into()],
+                ..Default::default()
+            },
+            3 => EgressConfig {
+                deny: self.egress_custom_deny.value().split_whitespace().map(String::from).collect(),
+                allow: self.egress_custom_allow.value().split_whitespace().map(String::from).collect(),
+                ..Default::default()
+            },
+            _ => EgressConfig::default(), // 0 = open
+        }
+    }
+
     fn build_config(&self) -> BoxConfig {
         let pt = self.current_provider_type().clone();
         let base_url = if pt == ProviderType::OpenaiCompatible {
@@ -665,7 +736,11 @@ impl App {
             },
             folder: FolderConfig {
                 path: PathBuf::from(self.folder.value()),
-                sync: SyncMode::Mount,
+                sync: if self.sync_mode_idx == 1 {
+                    SyncMode::Snapshot
+                } else {
+                    SyncMode::Mount
+                },
             },
             lifecycle: if self.is_persistent() {
                 Lifecycle::Persistent
@@ -692,6 +767,7 @@ impl App {
                 },
             },
             network: NetworkMode::Open,
+            egress: self.egress_config(),
             resources: ResourceConfig {
                 cpus: None,
                 memory: None,
@@ -726,6 +802,43 @@ impl App {
             let idx = self.images_idx.min(self.cache_images.len() - 1);
             self.images_idx = idx;
             self.images_list_state.select(Some(idx));
+        }
+    }
+
+    fn refresh_profiles(&mut self) {
+        self.profiles = agentbox_core::list_profiles().unwrap_or_default();
+        if self.profiles.is_empty() {
+            self.profiles_list_state.select(None);
+            self.profiles_idx = 0;
+        } else {
+            let idx = self.profiles_idx.min(self.profiles.len() - 1);
+            self.profiles_idx = idx;
+            self.profiles_list_state.select(Some(idx));
+        }
+    }
+
+    fn refresh_manifests(&mut self) {
+        let bundled: Vec<(String, String, bool)> = self
+            .manifests_dir
+            .as_deref()
+            .map(agentbox_core::manifest::list_manifests_meta)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| (m.id, m.display_name, false))
+            .collect();
+        let user: Vec<(String, String, bool)> = agentbox_core::list_user_manifests()
+            .into_iter()
+            .map(|m| (m.id, m.display_name, true))
+            .collect();
+        self.all_manifest_items = bundled.into_iter().chain(user).collect();
+        let total = self.all_manifest_items.len();
+        if total == 0 {
+            self.manifests_list_state.select(None);
+            self.manifests_idx = 0;
+        } else {
+            let idx = self.manifests_idx.min(total - 1);
+            self.manifests_idx = idx;
+            self.manifests_list_state.select(Some(idx));
         }
     }
 
@@ -801,6 +914,9 @@ fn event_loop(
                     Action::Attach(box_name) => {
                         return Ok(WizardResult::Attach { box_name });
                     }
+                    Action::RunProfile { name, folder } => {
+                        return Ok(WizardResult::RunProfile { name, folder });
+                    }
                 }
             }
         }
@@ -812,6 +928,7 @@ enum Action {
     Quit,
     Launch,
     Attach(String),
+    RunProfile { name: String, folder: PathBuf },
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) -> Action {
@@ -819,9 +936,13 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         Screen::Home => handle_home(app, key),
         Screen::BoxDetail => handle_box_detail(app, key),
         Screen::Images => handle_images(app, key),
+        Screen::Profiles => handle_profiles(app, key),
+        Screen::ProfileFolder => handle_profile_folder(app, key),
+        Screen::Manifests => handle_manifests(app, key),
         Screen::WizardAgent => handle_agent(app, key),
         Screen::WizardFolder => handle_folder(app, key),
         Screen::WizardLifecycle => handle_lifecycle(app, key),
+        Screen::WizardEgress => handle_egress(app, key),
         Screen::WizardProvider => handle_provider(app, key),
         Screen::WizardPiModels => handle_pi_models(app, key),
         Screen::WizardSummary => handle_summary(app, key),
@@ -868,6 +989,16 @@ fn handle_home(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Char('i') => {
             app.refresh_images();
             app.screen = Screen::Images;
+        }
+        KeyCode::Char('p') => {
+            app.refresh_profiles();
+            app.screen = Screen::Profiles;
+        }
+        KeyCode::Char('m') => {
+            app.refresh_manifests();
+            app.manifest_add_mode = false;
+            app.manifest_url = Input::new("");
+            app.screen = Screen::Manifests;
         }
         _ => {}
     }
@@ -967,6 +1098,15 @@ fn handle_images(app: &mut App, key: KeyEvent) -> Action {
                 });
                 app.refresh_images();
             }
+        }
+        KeyCode::Char('P') => {
+            let ids: Vec<String> = app.cache_images.iter().map(|i| i.agent_id.clone()).collect();
+            let count = ids.len();
+            for id in &ids {
+                do_async(agentbox_core::remove_cache_image(id)).ok();
+            }
+            app.refresh_images();
+            app.status_msg = Some((format!("Pruned {count} cache image(s)."), false));
         }
         KeyCode::Char('r') => {
             app.refresh_images();
@@ -1070,33 +1210,88 @@ fn handle_lifecycle(app: &mut App, key: KeyEvent) -> Action {
     let daemon_locked = app.selected_agent_is_daemon();
     match key.code {
         KeyCode::Esc => {
+            app.prov_focus = 0;
             app.screen = Screen::WizardFolder;
         }
+        // Lifecycle type toggle (focus 0)
         KeyCode::Left if app.lifecycle_idx > 0 && app.prov_focus == 0 && !daemon_locked => {
             app.lifecycle_idx -= 1;
         }
         KeyCode::Right if app.lifecycle_idx < 1 && app.prov_focus == 0 && !daemon_locked => {
             app.lifecycle_idx += 1;
         }
+        // Sync mode toggle (focus 2)
+        KeyCode::Left if app.prov_focus == 2 && app.sync_mode_idx > 0 => {
+            app.sync_mode_idx -= 1;
+        }
+        KeyCode::Right if app.prov_focus == 2 && app.sync_mode_idx < 1 => {
+            app.sync_mode_idx += 1;
+        }
         KeyCode::Tab => {
-            if app.is_persistent() {
-                app.prov_focus = if app.prov_focus == 0 { 1 } else { 0 };
-            }
+            // Cycle: 0 (lifecycle) → 1 (box name, persistent only) → 2 (sync) → 0
+            app.prov_focus = match app.prov_focus {
+                0 if app.is_persistent() => 1,
+                0 => 2,
+                1 => 2,
+                _ => 0,
+            };
         }
         KeyCode::Enter => {
-            if app.is_persistent() && app.prov_focus == 0 {
-                // Advance to name field
-                app.prov_focus = 1;
-            } else if app.is_persistent() && app.box_name.value().is_empty() {
-                // require a name
-            } else {
-                app.prov_focus = 0;
-                app.screen = Screen::WizardProvider;
+            match app.prov_focus {
+                0 if app.is_persistent() => app.prov_focus = 1,
+                1 if app.box_name.value().is_empty() => {}
+                1 => app.prov_focus = 2,
+                _ => {
+                    app.prov_focus = 0;
+                    app.screen = Screen::WizardEgress;
+                }
             }
         }
         _ => {
             if app.is_persistent() && app.prov_focus == 1 {
                 app.box_name.on_key(&key);
+            }
+        }
+    }
+    Action::Continue
+}
+
+// ── Wizard: egress ────────────────────────────────────────────────────────────
+
+const EGRESS_PRESETS: [&str; 4] = ["Open (no filtering)", "Block local network", "Provider only (deny rest)", "Custom"];
+
+fn handle_egress(app: &mut App, key: KeyEvent) -> Action {
+    let is_custom = app.egress_preset_idx == 3;
+    match key.code {
+        KeyCode::Esc => {
+            app.screen = Screen::WizardLifecycle;
+        }
+        KeyCode::Up | KeyCode::Char('k') if !is_custom => {
+            if app.egress_preset_idx > 0 {
+                app.egress_preset_idx -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') if !is_custom => {
+            if app.egress_preset_idx + 1 < EGRESS_PRESETS.len() {
+                app.egress_preset_idx += 1;
+            }
+        }
+        KeyCode::Tab if is_custom => {
+            app.egress_custom_focus = if app.egress_custom_focus == 0 { 1 } else { 0 };
+        }
+        KeyCode::Up | KeyCode::Down | KeyCode::Char('k') | KeyCode::Char('j') if is_custom => {
+            // let arrow keys fall through to input widgets
+        }
+        KeyCode::Enter => {
+            app.screen = Screen::WizardProvider;
+        }
+        _ => {
+            if is_custom {
+                if app.egress_custom_focus == 0 {
+                    app.egress_custom_deny.on_key(&key);
+                } else {
+                    app.egress_custom_allow.on_key(&key);
+                }
             }
         }
     }
@@ -1110,7 +1305,7 @@ fn handle_provider(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
             app.prov_focus = 0;
-            app.screen = Screen::WizardLifecycle;
+            app.screen = Screen::WizardEgress;
         }
         KeyCode::Tab => {
             app.prov_focus = (app.prov_focus + 1) % 5;
@@ -1191,6 +1386,141 @@ fn handle_summary(app: &mut App, key: KeyEvent) -> Action {
     Action::Continue
 }
 
+// ── Profiles ─────────────────────────────────────────────────────────────────
+
+fn handle_profiles(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.screen = Screen::Home;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.profiles_idx > 0 {
+                app.profiles_idx -= 1;
+                app.profiles_list_state.select(Some(app.profiles_idx));
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.profiles_idx + 1 < app.profiles.len() {
+                app.profiles_idx += 1;
+                app.profiles_list_state.select(Some(app.profiles_idx));
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(p) = app.profiles.get(app.profiles_idx) {
+                app.profile_run_name = p.name.clone();
+                app.profile_folder = Input::new("");
+                app.screen = Screen::ProfileFolder;
+            }
+        }
+        KeyCode::Char('r') => {
+            app.refresh_profiles();
+        }
+        _ => {}
+    }
+    Action::Continue
+}
+
+fn handle_profile_folder(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => {
+            app.screen = Screen::Profiles;
+        }
+        KeyCode::Enter => {
+            let folder = PathBuf::from(app.profile_folder.value());
+            if !folder.exists() {
+                app.status_msg = Some((format!("Path does not exist: {}", folder.display()), true));
+            } else if !folder.is_dir() {
+                app.status_msg = Some(("Path is not a directory.".into(), true));
+            } else {
+                let name = app.profile_run_name.clone();
+                return Action::RunProfile { name, folder };
+            }
+        }
+        _ => {
+            app.profile_folder.on_key(&key);
+        }
+    }
+    Action::Continue
+}
+
+// ── Manifests ─────────────────────────────────────────────────────────────────
+
+fn handle_manifests(app: &mut App, key: KeyEvent) -> Action {
+    if app.manifest_add_mode {
+        match key.code {
+            KeyCode::Esc => {
+                app.manifest_add_mode = false;
+                app.manifest_url = Input::new("");
+            }
+            KeyCode::Enter => {
+                let url = app.manifest_url.value();
+                if url.trim().is_empty() {
+                    app.manifest_add_mode = false;
+                    return Action::Continue;
+                }
+                let result = do_async(agentbox_core::add_manifest(&url, false));
+                app.manifest_add_mode = false;
+                app.manifest_url = Input::new("");
+                match result {
+                    Ok((id, _)) => {
+                        app.status_msg = Some((format!("Manifest '{id}' installed."), false));
+                        app.refresh_manifests();
+                    }
+                    Err(e) => {
+                        app.status_msg = Some((format!("Error: {e}"), true));
+                    }
+                }
+            }
+            _ => {
+                app.manifest_url.on_key(&key);
+            }
+        }
+        return Action::Continue;
+    }
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.screen = Screen::Home;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.manifests_idx > 0 {
+                app.manifests_idx -= 1;
+                app.manifests_list_state.select(Some(app.manifests_idx));
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.manifests_idx + 1 < app.all_manifest_items.len() {
+                app.manifests_idx += 1;
+                app.manifests_list_state.select(Some(app.manifests_idx));
+            }
+        }
+        KeyCode::Char('a') => {
+            app.manifest_add_mode = true;
+            app.manifest_url = Input::new("");
+        }
+        KeyCode::Char('d') | KeyCode::Delete => {
+            if let Some((id, _, is_user)) = app.all_manifest_items.get(app.manifests_idx) {
+                if *is_user {
+                    let id = id.clone();
+                    let result = agentbox_core::remove_manifest(&id);
+                    app.status_msg = Some(match result {
+                        Ok(()) => (format!("Manifest '{id}' removed."), false),
+                        Err(e) => (format!("Error: {e}"), true),
+                    });
+                    app.refresh_manifests();
+                } else {
+                    app.status_msg = Some(("Bundled manifests cannot be removed.".into(), true));
+                }
+            }
+        }
+        KeyCode::Char('r') => {
+            app.refresh_manifests();
+        }
+        _ => {}
+    }
+    Action::Continue
+}
+
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 fn render(frame: &mut Frame, app: &App) {
@@ -1206,9 +1536,13 @@ fn render(frame: &mut Frame, app: &App) {
         Screen::Home => render_home(frame, chunks[1], app),
         Screen::BoxDetail => render_box_detail(frame, chunks[1], app),
         Screen::Images => render_images(frame, chunks[1], app),
+        Screen::Profiles => render_profiles(frame, chunks[1], app),
+        Screen::ProfileFolder => render_profile_folder(frame, chunks[1], app),
+        Screen::Manifests => render_manifests(frame, chunks[1], app),
         Screen::WizardAgent => render_agent(frame, chunks[1], app),
         Screen::WizardFolder => render_folder(frame, chunks[1], app),
         Screen::WizardLifecycle => render_lifecycle(frame, chunks[1], app),
+        Screen::WizardEgress => render_egress(frame, chunks[1], app),
         Screen::WizardProvider => render_provider(frame, chunks[1], app),
         Screen::WizardPiModels => render_pi_models(frame, chunks[1], app),
         Screen::WizardSummary => render_summary(frame, chunks[1], app),
@@ -1222,12 +1556,16 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         Screen::Home => " agentbox ",
         Screen::BoxDetail => " agentbox — manage box ",
         Screen::Images => " agentbox — cache images ",
-        Screen::WizardAgent => " agentbox — new box (1/5) select agent ",
-        Screen::WizardFolder => " agentbox — new box (2/5) workspace folder ",
-        Screen::WizardLifecycle => " agentbox — new box (3/5) lifecycle ",
-        Screen::WizardProvider => " agentbox — new box (4/5) provider ",
-        Screen::WizardPiModels => " agentbox — new box (4b) Pi custom models (optional) ",
-        Screen::WizardSummary => " agentbox — new box (5/5) ready to launch ",
+        Screen::Profiles => " agentbox — profiles ",
+        Screen::ProfileFolder => " agentbox — run profile ",
+        Screen::Manifests => " agentbox — manifests ",
+        Screen::WizardAgent => " agentbox — new box (1/6) select agent ",
+        Screen::WizardFolder => " agentbox — new box (2/6) workspace folder ",
+        Screen::WizardLifecycle => " agentbox — new box (3/6) lifecycle + sync ",
+        Screen::WizardEgress => " agentbox — new box (4/6) network egress ",
+        Screen::WizardProvider => " agentbox — new box (5/6) provider ",
+        Screen::WizardPiModels => " agentbox — new box (5b) Pi custom models (optional) ",
+        Screen::WizardSummary => " agentbox — new box (6/6) ready to launch ",
     };
     let block = Block::default()
         .title(title)
@@ -1240,12 +1578,16 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
     let base_help = match app.screen {
-        Screen::Home => "↑↓ navigate  Enter open  n new box  i images  r refresh  q quit",
+        Screen::Home => "↑↓ navigate  Enter open  n new  i images  p profiles  m manifests  r refresh  q quit",
         Screen::BoxDetail => "↑↓ select action  Enter execute  Esc back",
-        Screen::Images => "↑↓ navigate  d delete  r refresh  Esc back",
+        Screen::Images => "↑↓ navigate  d delete  P prune all  r refresh  Esc back",
+        Screen::Profiles => "↑↓/jk navigate  Enter run  r refresh  Esc back",
+        Screen::ProfileFolder => "Type folder path  Enter launch  Esc back",
+        Screen::Manifests => "↑↓ navigate  a add  d remove user  r refresh  Esc back",
         Screen::WizardAgent => "↑↓/jk navigate  Enter select  Esc back",
         Screen::WizardFolder => "Type path  Enter confirm  Tab project name  Esc back",
-        Screen::WizardLifecycle => "← → type  Tab name field  Enter next  Esc back",
+        Screen::WizardLifecycle => "← → lifecycle/sync  Tab next field  Enter next  Esc back",
+        Screen::WizardEgress => "↑↓/jk select preset  Tab switch field (custom)  Enter next  Esc back",
         Screen::WizardProvider => "Tab/↵ next field  ← → type (field 1)  Esc back",
         Screen::WizardPiModels => "Type JSON  F5 continue  Esc back  (leave empty to skip)",
         Screen::WizardSummary => "Enter launch  Esc back  q quit",
@@ -1618,6 +1960,7 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             Constraint::Length(0)
         },
+        Constraint::Length(3),
         Constraint::Min(0),
     ])
     .split(area);
@@ -1671,6 +2014,84 @@ fn render_lifecycle(frame: &mut Frame, area: Rect, app: &App) {
             app.box_name
                 .widget("Box name  (used to reconnect)", app.prov_focus == 1, t),
             chunks[1],
+        );
+    }
+
+    let sync_labels = ["mount", "snapshot"];
+    let sync_left = if app.sync_mode_idx > 0 { "◀ " } else { "  " };
+    let sync_right = if app.sync_mode_idx < 1 { " ▶" } else { "  " };
+    let sync_focused = app.prov_focus == 2;
+    let sync_desc = if app.sync_mode_idx == 1 {
+        "  — copy folder in; review diff before writeback"
+    } else {
+        "  — live bind mount, changes are immediate"
+    };
+    let sync_text = Line::from(vec![
+        Span::styled(sync_left, Style::default().fg(t.text_dim)),
+        Span::styled(
+            sync_labels[app.sync_mode_idx],
+            Style::default().fg(t.text).bold(),
+        ),
+        Span::styled(sync_right, Style::default().fg(t.text_dim)),
+        Span::styled(sync_desc, Style::default().fg(t.text_dim)),
+    ]);
+    let sync_border = if sync_focused {
+        Style::default().fg(t.border_focused)
+    } else {
+        Style::default().fg(t.border)
+    };
+    frame.render_widget(
+        Paragraph::new(sync_text)
+            .block(Block::default().title("Sync mode  (← →)").borders(Borders::ALL).border_style(sync_border)),
+        chunks[2],
+    );
+}
+
+fn render_egress(frame: &mut Frame, area: Rect, app: &App) {
+    let t = app.theme();
+    let is_custom = app.egress_preset_idx == 3;
+
+    let chunks = Layout::vertical([
+        Constraint::Length(EGRESS_PRESETS.len() as u16 + 2),
+        if is_custom { Constraint::Length(3) } else { Constraint::Length(0) },
+        if is_custom { Constraint::Length(3) } else { Constraint::Length(0) },
+        Constraint::Min(0),
+    ])
+    .split(area);
+
+    let items: Vec<ListItem> = EGRESS_PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let selected = i == app.egress_preset_idx;
+            let prefix = if selected { "▶ " } else { "  " };
+            let style = if selected {
+                Style::default().fg(t.selection).bold()
+            } else {
+                Style::default().fg(t.text)
+            };
+            ListItem::new(Line::from(vec![Span::styled(format!("{prefix}{label}"), style)]))
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Network egress preset ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.border)),
+    );
+    frame.render_widget(list, chunks[0]);
+
+    if is_custom {
+        frame.render_widget(
+            app.egress_custom_deny
+                .widget("Deny rules (space-separated: IPs, CIDRs, hostnames, presets)", app.egress_custom_focus == 0, t),
+            chunks[1],
+        );
+        frame.render_widget(
+            app.egress_custom_allow
+                .widget("Allow rules (space-separated: IPs, CIDRs, hostnames, presets)", app.egress_custom_focus == 1, t),
+            chunks[2],
         );
     }
 }
@@ -1816,12 +2237,25 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         }
     };
 
+    let sync_label = if app.sync_mode_idx == 1 { "snapshot" } else { "mount" };
+    let egress_label = match app.egress_preset_idx {
+        1 => "block-local".to_string(),
+        2 => "provider-only".to_string(),
+        3 => {
+            let deny = app.egress_custom_deny.value();
+            let allow = app.egress_custom_allow.value();
+            format!("custom (deny: {} / allow: {})", if deny.is_empty() { "—" } else { &deny }, if allow.is_empty() { "—" } else { &allow })
+        }
+        _ => "open".to_string(),
+    };
     let text = format!(
-        "\n  Agent:         {} ({})\n  Folder:        {}\n{project_line}  Lifecycle:     {}\n\n  Provider type: {}\n  Provider name: {}\n  Model:         {}\n{}  Auth:          {}\n\n  Press Enter to launch.",
+        "\n  Agent:         {} ({})\n  Folder:        {}\n{project_line}  Lifecycle:     {}\n  Sync:          {}\n  Egress:        {}\n\n  Provider type: {}\n  Provider name: {}\n  Model:         {}\n{}  Auth:          {}\n\n  Press Enter to launch.",
         agent.display_name,
         agent.id,
         app.folder.value(),
         lifecycle,
+        sync_label,
+        egress_label,
         pt_label(pt),
         prov_name,
         app.prov_model.value(),
@@ -1838,6 +2272,184 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         ),
         area,
     );
+}
+
+fn render_profiles(frame: &mut Frame, area: Rect, app: &App) {
+    let t = app.theme();
+    if app.profiles.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "\n  No profiles saved.\n\n  Create one with:\n    agentbox profile save <name> --from box.yaml",
+            )
+            .style(Style::default().fg(t.text_dim))
+            .block(
+                Block::default()
+                    .title(" Profiles ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(t.border)),
+            ),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .profiles
+        .iter()
+        .map(|p| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("  {:<24}", p.name),
+                    Style::default().fg(t.text).bold(),
+                ),
+                Span::styled(
+                    format!("{:<20}", p.agent),
+                    Style::default().fg(t.text_dim),
+                ),
+                Span::styled(
+                    format!("{} / {}", p.provider.name, p.provider.model),
+                    Style::default().fg(t.accent),
+                ),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(format!(" Profiles ({}) — Enter to run ", app.profiles.len()))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t.border)),
+        )
+        .highlight_symbol("▶ ")
+        .highlight_style(Style::default().fg(t.selection).bold());
+
+    let mut state = app.profiles_list_state.clone();
+    state.select(if app.profiles.is_empty() {
+        None
+    } else {
+        Some(app.profiles_idx)
+    });
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_profile_folder(frame: &mut Frame, area: Rect, app: &App) {
+    let t = app.theme();
+    let chunks = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(3),
+        Constraint::Min(0),
+    ])
+    .split(area);
+
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Running profile: {}  (agent: {})",
+            app.profile_run_name,
+            app.profiles
+                .iter()
+                .find(|p| p.name == app.profile_run_name)
+                .map(|p| p.agent.as_str())
+                .unwrap_or("?")
+        ))
+        .style(Style::default().fg(t.text_dim)),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        app.profile_folder.widget("Workspace folder path", true, t),
+        chunks[1],
+    );
+
+    if let Some((msg, is_err)) = &app.status_msg {
+        let style = if *is_err {
+            Style::default().fg(t.error)
+        } else {
+            Style::default().fg(t.success)
+        };
+        frame.render_widget(
+            Paragraph::new(msg.as_str()).style(style),
+            chunks[2],
+        );
+    }
+}
+
+fn render_manifests(frame: &mut Frame, area: Rect, app: &App) {
+    let t = app.theme();
+
+    if app.manifest_add_mode {
+        let chunks = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ])
+        .split(area);
+        frame.render_widget(
+            Paragraph::new("Enter a URL (https://…) or local file path to the manifest YAML:")
+                .style(Style::default().fg(t.text_dim)),
+            chunks[0],
+        );
+        frame.render_widget(app.manifest_url.widget("Manifest URL / path", true, t), chunks[1]);
+        return;
+    }
+
+    if app.all_manifest_items.is_empty() {
+        frame.render_widget(
+            Paragraph::new(
+                "\n  No manifests found.\n\n  Add one with:\n    agentbox manifest add <url>  or press 'a' here",
+            )
+            .style(Style::default().fg(t.text_dim))
+            .block(
+                Block::default()
+                    .title(" Manifests ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(t.border)),
+            ),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .all_manifest_items
+        .iter()
+        .map(|(id, display_name, is_user)| {
+            let source_label = if *is_user { "user" } else { "bundled" };
+            let source_color = if *is_user { t.accent } else { t.text_dim };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("  {:<24}", display_name),
+                    Style::default().fg(t.text).bold(),
+                ),
+                Span::styled(
+                    format!("({:<20})", id),
+                    Style::default().fg(t.text_dim),
+                ),
+                Span::styled(source_label, Style::default().fg(source_color)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(format!(
+                    " Manifests ({}) — a add  d remove user ",
+                    app.all_manifest_items.len()
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t.border)),
+        )
+        .highlight_symbol("▶ ")
+        .highlight_style(Style::default().fg(t.selection).bold());
+
+    let mut state = app.manifests_list_state.clone();
+    state.select(if app.all_manifest_items.is_empty() {
+        None
+    } else {
+        Some(app.manifests_idx)
+    });
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn find_manifests_dir() -> Option<PathBuf> {
