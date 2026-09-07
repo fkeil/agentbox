@@ -1,0 +1,104 @@
+# Syncthing behind Traefik on TrueNAS SCALE 24.10+ (Electric Eel or newer).
+#
+# Traefik's *static* configuration lives here as command-line flags rather than
+# in a traefik.yaml file. Traefik treats file / CLI / env static config as
+# mutually exclusive sources, so keeping it in `command:` is what lets every
+# deployment-specific value come from .env instead of being edited in place.
+# Only the *dynamic* configuration (middlewares) is file-provided.
+
+networks:
+  edge:
+    name: edge
+
+services:
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik
+    restart: unless-stopped
+    networks:
+      - edge
+    ports:
+      # TrueNAS SCALE serves its own web UI on 80/443 by default. Move the
+      # TrueNAS UI to other ports first, or these bindings will fail.
+      - "80:80"
+      - "443:443"
+    command:
+      - "--global.sendAnonymousUsage=false"
+      - "--log.level=${TRAEFIK_LOG_LEVEL}"
+      - "--accesslog=true"
+
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.network=edge"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+
+      # Entry points
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+      - "--entrypoints.websecure.http.tls.certresolver=letsencrypt"
+
+      # ACME via DNS-01. DNS-01 is what makes a trusted certificate possible
+      # for a host that is only reachable on the LAN: no inbound port 80 and
+      # no publicly routable A record are required.
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${ACME_DNS_PROVIDER}"
+      # Resolve the _acme-challenge TXT record against public DNS directly, so a
+      # split-horizon internal resolver cannot mask propagation.
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,9.9.9.9:53"
+    environment:
+      # Credential for the DNS provider named in ACME_DNS_PROVIDER. The variable
+      # name is provider-specific -- see .env.example.
+      CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}"
+    volumes:
+      - "${APPS_PATH}/traefik/acme:/acme"
+      - "${APPS_PATH}/traefik/dynamic:/etc/traefik/dynamic:ro"
+      # Read-only: Traefik only needs to watch container events and labels.
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  syncthing:
+    image: syncthing/syncthing:1.29
+    container_name: syncthing
+    restart: unless-stopped
+    hostname: ${SYNCTHING_DEVICE_NAME}
+    networks:
+      - edge
+    ports:
+      # The sync protocol and discovery are raw TCP/UDP, not HTTP, so they
+      # bypass Traefik entirely and are published straight to the host.
+      - "22000:22000/tcp"   # sync protocol
+      - "22000:22000/udp"   # sync protocol over QUIC
+      - "21027:21027/udp"   # local (broadcast) discovery
+      # 8384 (web UI) is deliberately NOT published -- it is reachable only
+      # through Traefik, so the UI is never served unencrypted on the LAN.
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      STGUIADDRESS: "0.0.0.0:8384"
+      # Suppress the automatic ~/Sync folder; folders are added deliberately.
+      STNODEFAULTFOLDER: "1"
+    volumes:
+      - "${APPS_PATH}/syncthing/config:/var/syncthing/config"
+      - "${SYNC_DATA_PATH}:/var/syncthing/data"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.syncthing.rule=Host(`${SYNCTHING_HOST}`)"
+      - "traefik.http.routers.syncthing.entrypoints=websecure"
+      - "traefik.http.routers.syncthing.tls=true"
+      - "traefik.http.routers.syncthing.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.syncthing.middlewares=syncthing-chain@file"
+      - "traefik.http.services.syncthing.loadbalancer.server.port=8384"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8384/rest/noauth/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
