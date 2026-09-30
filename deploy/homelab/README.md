@@ -4,7 +4,6 @@ Read [`HANDOFF.md`](HANDOFF.md) first — it carries the topology, the decisions
 and why they were made. [`RUNBOOK.md`](RUNBOOK.md) is the same build written as
 instructions for an agent, with verification gates. This file is the build
 order for a person.
-and why they were made. This file is the build order.
 
 | Directory | Runs on |
 |---|---|
