@@ -1,0 +1,39 @@
+# Shared middlewares. Drop into your existing Traefik's dynamic config
+# directory -- these are hot-reloaded, no restart required.
+
+http:
+  middlewares:
+    # Private LAN plus Tailscale. 100.64.0.0/10 is CGNAT space, which Tailscale
+    # allocates from and which is NOT covered by the RFC1918 ranges -- omit it
+    # and every tailnet client gets a 403 that looks like a broken route.
+    homelab-lan-only:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+          - "100.64.0.0/10"
+
+    # Telegram's published webhook source ranges. These are the only addresses
+    # that ever need to reach the one publicly-routable path in this setup.
+    # Telegram documents that these may change: core.telegram.org/bots/webhooks
+    homelab-telegram-only:
+      ipAllowList:
+        sourceRange:
+          - "149.154.160.0/20"
+          - "91.108.4.0/22"
+
+    homelab-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        frameDeny: true
+
+    homelab-lan-chain:
+      chain:
+        middlewares:
+          - homelab-lan-only
+          - homelab-headers

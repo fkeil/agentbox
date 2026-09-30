@@ -1,0 +1,22 @@
+# Syncthing UI on TrueNAS. Replaces the Docker labels in the original bundle:
+# labels only work when Traefik can read the local Docker socket, and Traefik
+# lives on Proxmox now.
+#
+# Requires Syncthing's 8384 to be published on the TrueNAS host -- the original
+# compose deliberately did not publish it.
+
+http:
+  routers:
+    syncthing:
+      rule: "Host(`syncthing.__DOMAIN__`)"
+      entrypoints: ["__TRAEFIK_ENTRYPOINT__"]
+      middlewares: ["homelab-lan-chain"]
+      service: syncthing
+      tls:
+        certresolver: "__TRAEFIK_CERTRESOLVER__"
+
+  services:
+    syncthing:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.4:8384"

@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "livesync-bridge: replicates the CouchDB vault against a filesystem dir.",
+    "Peers sharing a `group` sync with each other -- that pairing is what makes",
+    "an n8n-written .md reach your phone.",
+    "`passphrase` MUST stay empty: LiveSync E2EE breaks CouchDB<->storage peers,",
+    "because the bridge cannot read documents it cannot decrypt.",
+    "Credentials are duplicated from ../.env here; keep them in sync, and chmod",
+    "600 this file."
+  ],
+  "peers": [
+    {
+      "type": "couchdb",
+      "name": "vault-db",
+      "group": "vault",
+      "url": "http://couchdb:5984",
+      "database": "obsidian",
+      "username": "obsidian",
+      "password": "SAME_AS_COUCHDB_PASSWORD_IN_ENV",
+      "passphrase": "",
+      "obfuscatePassphrase": "",
+      "baseDir": "",
+      "customChunkSize": 0,
+      "minimumChunkSize": 20,
+      "useRemoteTweaks": true
+    },
+    {
+      "type": "storage",
+      "name": "vault-files",
+      "group": "vault",
+      "baseDir": "/vault",
+      "scanOfflineChanges": true,
+      "useChokidar": true
+    }
+  ]
+}

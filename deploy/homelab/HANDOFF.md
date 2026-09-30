@@ -62,20 +62,16 @@ because a workstation is asleep.
 **Telegram stays**, with the privacy cost understood and accepted: bot messages
 are not E2EE, so voice notes transit Telegram's servers.
 
-## Corrections owed to `deploy/syncthing-truenas/`
+## Status of the deployed bundles
 
-That bundle was written before we knew Traefik already existed on Proxmox. It
-deploys a second, redundant Traefik. Not yet applied:
+`deploy/syncthing-truenas/` has been corrected: the redundant Traefik service
+is gone, `8384` is published so a remote Traefik can reach it, the Docker
+labels are replaced by a file-provider route, and the README no longer tells
+you to move the TrueNAS web UI off 80/443.
 
-1. Delete the `traefik` service from `docker-compose.yaml`.
-2. Revert the TrueNAS web UI to ports 80/443 — the move only existed to free
-   them for the Traefik that is now leaving.
-3. Publish Syncthing's `8384` on the host. It is currently unpublished on
-   purpose, which a same-box Traefik could reach and a remote one cannot.
-4. Replace the Syncthing Docker labels with a file-provider route on the
-   Proxmox Traefik pointing at `192.168.1.4:8384`. Labels need a local socket.
-5. Add `100.64.0.0/10` to the allowlist middleware — Tailscale uses CGNAT
-   space, not RFC1918, so tailnet clients currently get a 403.
+`deploy/homelab/` now carries the rest: the TrueNAS GPU stack, the Proxmox app
+stack with the CouchDB CORS config and bridge config, and the Traefik routes.
+See `README.md` there for build order.
 
 ## Security posture
 
@@ -115,18 +111,17 @@ the bot writes into the vault.
 
 ## Blocked on
 
-`homelab-survey.sh` (this directory) has not been run. Needed before writing
-configs, because the Traefik names used throughout the drafts — entrypoint
-`websecure`, resolver `letsencrypt`, dynamic dir `/etc/traefik/dynamic` — are
-**guesses** that must be replaced with whatever the existing Proxmox instance
-actually uses. A route attached to the wrong resolver fails as a cert error.
+`homelab-survey.sh` has not been run. Everything is written, but the Traefik
+routes still carry `__TRAEFIK_ENTRYPOINT__`, `__TRAEFIK_CERTRESOLVER__`,
+`__DOMAIN__` and `__APPSTACK_VM_IP__` placeholders, because the existing
+Proxmox Traefik's real names are unknown. A route attached to a resolver that
+does not exist fails as a certificate error.
 
-Also unknown: real IPs, pool/dataset names, Proxmox storage and bridge names,
-exact GPU model, whether Tailscale is installed anywhere, and the DNS zone.
+Also unknown: pool/dataset names, Proxmox storage and bridge names, exact GPU
+model, and whether Tailscale is installed anywhere.
 
 ## Next step
 
-Run the survey on Proxmox and TrueNAS, then write: the corrected Syncthing
-stack, the Proxmox Docker VM compose (n8n + CouchDB + bridge), the TrueNAS GPU
-stack (Ollama + faster-whisper), Traefik file-provider routes including the
-Telegram-restricted webhook rule, and the bridge config.
+Run the survey, substitute the placeholders (`grep -rn '__[A-Z_]*__'`), then
+follow the build order in `README.md`. The n8n workflow itself is described
+there but not built — it is assembled in n8n's UI, not in a config file.

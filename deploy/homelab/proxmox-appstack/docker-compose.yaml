@@ -1,0 +1,78 @@
+# Always-on app stack, in a Docker VM on Proxmox.
+#
+# Traefik is NOT in this file -- it already exists elsewhere on Proxmox, so it
+# cannot read this VM's Docker socket and cannot discover these by label. Each
+# service therefore publishes a port on the VM, and ../traefik-routes/ carries
+# file-provider routers that point at them.
+#
+# Those published ports bypass Traefik and its allowlist. Firewall this VM to
+# the Traefik host only -- see ../README.md.
+
+services:
+  couchdb:
+    image: couchdb:3.4
+    container_name: couchdb
+    restart: unless-stopped
+    ports:
+      - "5984:5984"
+    environment:
+      COUCHDB_USER: "${COUCHDB_USER}"
+      COUCHDB_PASSWORD: "${COUCHDB_PASSWORD}"
+    volumes:
+      # Local VM disk, deliberately NOT the NFS mount: CouchDB over NFS risks
+      # corruption. Back it up to TrueNAS with a scheduled dump instead.
+      - "couchdb-data:/opt/couchdb/data"
+      - "./couchdb/local.ini:/opt/couchdb/etc/local.d/10-livesync.ini:ro"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:5984/_up"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  n8n:
+    image: n8nio/n8n:1.123.83
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Pin this. Without it n8n generates a new key on first start and every
+      # stored credential becomes undecryptable after a container replacement.
+      N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY}"
+      # Telegram registers its webhook against this, so it must be the public
+      # URL Telegram can reach -- not a LAN address.
+      WEBHOOK_URL: "https://${N8N_HOST}/"
+      N8N_HOST: "${N8N_HOST}"
+      N8N_PROTOCOL: "https"
+      N8N_PORT: "5678"
+      N8N_PROXY_HOPS: "1"
+      GENERIC_TIMEZONE: "${TZ}"
+      TZ: "${TZ}"
+      N8N_RUNNERS_ENABLED: "true"
+    volumes:
+      - "n8n-data:/home/node/.n8n"
+      # The vault mirror, NFS-mounted from TrueNAS on the VM host. n8n writes
+      # new notes here; livesync-bridge picks them up.
+      - "${VAULT_MIRROR}:/vault"
+    depends_on:
+      couchdb:
+        condition: service_healthy
+
+  livesync-bridge:
+    # Third-party build -- vrtmrz publishes no image. This path writes into
+    # your vault, so if you would rather not trust a community mirror, clone
+    # vrtmrz/livesync-bridge and swap the `image:` line for `build: ./src`.
+    image: ghcr.io/caiobcosta/livesync-bridge:latest
+    container_name: livesync-bridge
+    restart: unless-stopped
+    volumes:
+      - "./bridge/config.json:/app/dat/config.json:ro"
+      - "${VAULT_MIRROR}:/vault"
+    depends_on:
+      couchdb:
+        condition: service_healthy
+
+volumes:
+  couchdb-data:
+  n8n-data:

@@ -1,0 +1,66 @@
+# App stack on the Proxmox Docker VM, plus GPU services on TrueNAS.
+
+http:
+  routers:
+    # --- n8n: two routers, one service ------------------------------------
+    # The webhook path is the ONLY publicly reachable route in this setup.
+    # PathPrefix carries the trailing slash deliberately: `/webhook` without it
+    # also matches `/webhook-test/...`, which would expose n8n's test endpoints
+    # to the internet.
+    n8n-webhook:
+      rule: "Host(`n8n.__DOMAIN__`) && PathPrefix(`/webhook/`)"
+      entrypoints: ["__TRAEFIK_ENTRYPOINT__"]
+      middlewares: ["homelab-telegram-only", "homelab-headers"]
+      service: n8n
+      priority: 100
+      tls:
+        certresolver: "__TRAEFIK_CERTRESOLVER__"
+
+    # Everything else on that host -- the editor UI, the REST API -- stays
+    # private. Lower priority so the webhook rule above wins.
+    n8n-ui:
+      rule: "Host(`n8n.__DOMAIN__`)"
+      entrypoints: ["__TRAEFIK_ENTRYPOINT__"]
+      middlewares: ["homelab-lan-chain"]
+      service: n8n
+      priority: 10
+      tls:
+        certresolver: "__TRAEFIK_CERTRESOLVER__"
+
+    # --- CouchDB: the vault sync endpoint ---------------------------------
+    # Reached from the iPhone over Tailscale when away from home, which is why
+    # the allowlist must include CGNAT space. No security-headers middleware
+    # here: frameDeny and HSTS add nothing for an API client, and keeping the
+    # response minimal avoids interfering with LiveSync's CORS handshake.
+    couchdb:
+      rule: "Host(`couch.__DOMAIN__`)"
+      entrypoints: ["__TRAEFIK_ENTRYPOINT__"]
+      middlewares: ["homelab-lan-only"]
+      service: couchdb
+      tls:
+        certresolver: "__TRAEFIK_CERTRESOLVER__"
+
+    # --- GPU services -----------------------------------------------------
+    # n8n calls these directly over the LAN; these routes exist only so you can
+    # reach them from a browser or over Tailscale. Both ship ZERO auth.
+    ollama:
+      rule: "Host(`ollama.__DOMAIN__`)"
+      entrypoints: ["__TRAEFIK_ENTRYPOINT__"]
+      middlewares: ["homelab-lan-chain"]
+      service: ollama
+      tls:
+        certresolver: "__TRAEFIK_CERTRESOLVER__"
+
+  services:
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://__APPSTACK_VM_IP__:5678"
+    couchdb:
+      loadBalancer:
+        servers:
+          - url: "http://__APPSTACK_VM_IP__:5984"
+    ollama:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.4:11434"

@@ -1,0 +1,62 @@
+# GPU inference on TrueNAS SCALE (192.168.1.4). Ollama and Whisper share the
+# one card as ordinary containers -- no passthrough, no arbitration needed.
+#
+# Prerequisite: NVIDIA drivers installed via Apps -> Settings -> Install NVIDIA
+# Drivers, and the host rebooted. `nvidia-smi` must work on the host first.
+#
+# Both services publish on the LAN because n8n calls them from the Proxmox VM.
+# NEITHER HAS ANY AUTHENTICATION. Anything that can reach these ports has full
+# use of them -- see the firewall note in ../README.md.
+
+services:
+  ollama:
+    image: ollama/ollama:0.12.3
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      # Default is 5m, which evicts the model between notes and pays the full
+      # reload on every capture. Keep it resident.
+      OLLAMA_KEEP_ALIVE: "24h"
+      OLLAMA_HOST: "0.0.0.0:11434"
+    volumes:
+      - "${APPS_PATH}/ollama:/root/.ollama"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  whisper:
+    # Speaches (formerly faster-whisper-server): faster-whisper behind an
+    # OpenAI-compatible /v1/audio/transcriptions endpoint, which is what lets
+    # n8n POST audio with a stock HTTP Request node.
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    container_name: whisper
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      WHISPER__MODEL: "${WHISPER_MODEL}"
+      # float16 on a 24GB card; large-v3 is ~3GB and coexists with Ollama.
+      WHISPER__COMPUTE_TYPE: "float16"
+      # Unload after idle so the card is free for Ollama between captures.
+      WHISPER__TTL: "300"
+    volumes:
+      - "${APPS_PATH}/whisper/hf-cache:/home/ubuntu/.cache/huggingface/hub"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
