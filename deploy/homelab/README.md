@@ -1,6 +1,9 @@
 # Homelab: private Obsidian vault + local AI
 
 Read [`HANDOFF.md`](HANDOFF.md) first — it carries the topology, the decisions
+and why they were made. [`RUNBOOK.md`](RUNBOOK.md) is the same build written as
+instructions for an agent, with verification gates. This file is the build
+order for a person.
 and why they were made. This file is the build order.
 
 | Directory | Runs on |
@@ -88,17 +91,26 @@ Traefik's allowlist only protects traffic that goes *through* Traefik. n8n on
 published on the LAN and reachable directly. Ollama and Whisper have no
 authentication whatsoever.
 
-Restrict each host to the Traefik machine:
+**On the app-stack VM**, restrict to the hosts that need it. Allow SSH first —
+enabling `ufw` without it will lock you out of a remote machine:
 
 ```bash
-# On the app-stack VM
+ufw allow from 192.168.1.0/24 to any port 22 proto tcp   # do this FIRST
 ufw allow from <TRAEFIK_HOST_IP> to any port 5678 proto tcp
 ufw allow from <TRAEFIK_HOST_IP> to any port 5984 proto tcp
-ufw default deny incoming && ufw enable
-
-# TrueNAS additionally needs the VM itself, since n8n calls inference directly
-# — allow <APPSTACK_VM_IP> to 11434 and 8000.
+ufw default deny incoming
+ufw enable
 ```
+
+**On TrueNAS, do not do this.** SCALE ships no supported host firewall, and
+hand-written iptables rules do not survive updates or middleware restarts — you
+would be adding fragility, not security. Your options there are to restrict at
+the router or on a VLAN, or to accept the LAN as the trust boundary for Ollama
+and Whisper.
+
+That is a real residual risk, not a solved one: any compromised device on your
+network can drive both services. It is bounded — neither is reachable from the
+internet — but worth knowing you are accepting it.
 
 ## The n8n workflow
 
