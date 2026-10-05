@@ -62,7 +62,23 @@ because a workstation is asleep.
 **Telegram stays**, with the privacy cost understood and accepted: bot messages
 are not E2EE, so voice notes transit Telegram's servers.
 
-## Status of the deployed bundles
+## Pending decisions (2026-10-05) — the build is paused on these
+
+- **Ollama moves to the GB10** (operator decision). This reverses "capture path
+  has no Dell dependency": voice notes stop when the GB10 is off. Before
+  building, either keep the GB10 always on, or keep Whisper on an always-on
+  host so capture survives and only structuring waits.
+- **TrueNAS may be retired** to save energy: storage absorbed into Proxmox
+  (ZFS + Samba/NFS LXC) or onto a Raspberry Pi 5 with 2x4TB NVMe. A Pi cannot
+  host a GPU (single PCIe lane, no slot). Recommended: Proxmox absorbs
+  storage, Pi 5 becomes the off-box ZFS replication target.
+- **Proxmox cleanup in progress** with `park-guests.sh` (reversible: graceful
+  shutdown + onboot off, recorded in `/root/parked-guests.tsv`).
+
+`RUNBOOK.md` hardwires TrueNAS as vault + GPU host. Do not execute it until
+the layout above is settled; it will be rewritten for the chosen layout.
+
+
 
 `deploy/syncthing-truenas/` has been corrected: the redundant Traefik service
 is gone, `8384` is published so a remote Traefik can reach it, the Docker
