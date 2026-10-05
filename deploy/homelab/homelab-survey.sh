@@ -68,6 +68,52 @@ if have qm; then
   grep -E 'iface|bridge-ports|address' /etc/network/interfaces 2>/dev/null | head -30
 fi
 
+# ---------- Proxmox backups ----------
+if have pvesh; then
+  h "PROXMOX BACKUP COVERAGE"
+  echo "--- guests in NO backup job (the direct answer) ---"
+  pvesh get /cluster/backup-info/not-backed-up 2>&1
+  echo "--- scheduled backup jobs ---"
+  if [ -s /etc/pve/jobs.cfg ]; then redact < /etc/pve/jobs.cfg; else echo "(no /etc/pve/jobs.cfg)"; fi
+  [ -s /etc/pve/vzdump.cron ] && { echo "--- legacy vzdump.cron ---"; grep -v '^#' /etc/pve/vzdump.cron; }
+  echo "--- backup storages ---"
+  pvesm status --content backup 2>&1
+  echo "--- newest backup per guest (VMID  volume) ---"
+  # Volume names embed the timestamp, so lexical order is chronological per VMID.
+  for st in $(pvesm status --content backup 2>/dev/null | awk 'NR>1 {print $1}'); do
+    pvesm list "$st" --content backup 2>/dev/null | awk 'NR>1'
+  done | sort | awk '{last[$NF]=$1} END {for (v in last) print v, last[v]}' | sort -n
+  echo "--- recent backup task results ---"
+  pvesh get "/nodes/$(hostname)/tasks" --typefilter vzdump --limit 15 2>&1
+fi
+
+# ---------- TrueNAS ----------
+if have midclt; then
+  h "TRUENAS APPS AND VMS"
+  midclt call app.query 2>/dev/null | python3 -c '
+import json,sys
+for a in json.load(sys.stdin): print(f"app  {a.get(\"name\")}: {a.get(\"state\")}")' 2>/dev/null || echo "(app.query unavailable)"
+  midclt call vm.query 2>/dev/null | python3 -c '
+import json,sys
+for v in json.load(sys.stdin): print(f"vm   {v.get(\"name\")}: {(v.get(\"status\") or {}).get(\"state\")}")' 2>/dev/null || echo "(vm.query unavailable)"
+
+  h "TRUENAS DATA PROTECTION"
+  for task in pool.snapshottask replication cloudsync rsynctask; do
+    echo "--- $task ---"
+    midclt call "$task.query" 2>/dev/null | python3 -c '
+import json,sys
+keys=("dataset","name","description","source_datasets","target_dataset","path","transport",
+      "remotehost","lifetime_value","lifetime_unit","schedule","enabled","state","job")
+rows=json.load(sys.stdin)
+if not rows: print("(none configured)")
+for r in rows:
+    print({k:r[k] for k in keys if k in r})' 2>/dev/null | redact || echo "(unavailable)"
+  done
+  echo "--- newest snapshot per dataset ---"
+  zfs list -H -t snapshot -o name,creation -s creation 2>/dev/null \
+    | awk -F'\t' '{split($1,a,"@"); last[a[1]]=$2} END {for (d in last) print d "  " last[d]}' | sort
+fi
+
 # ---------- Traefik ----------
 h "TRAEFIK"
 TCONT=$(docker ps --format '{{.Names}}\t{{.Image}}' 2>/dev/null | grep -i traefik | cut -f1 | head -1)
