@@ -78,7 +78,37 @@ are not E2EE, so voice notes transit Telegram's servers.
 `RUNBOOK.md` hardwires TrueNAS as vault + GPU host. Do not execute it until
 the layout above is settled; it will be rewritten for the chosen layout.
 
+## Known RUNBOOK.md defects (fix when rewriting it)
 
+Found in review; not yet patched. Blocking:
+
+1. Nothing creates the vault dataset or its NFS export; Phase 2 `mount -a` fails.
+2. Nothing creates DNS records for couch/n8n/syncthing/ollama; Gate 4a fails.
+3. UID mismatch over NFS: n8n runs as 1000, dataset is 568. Phase 2's
+   `.writetest` runs as root, so the gate does not catch it.
+4. Phase 5's manual `setWebhook` + `secret_token` conflicts with n8n's Telegram
+   Trigger, which registers its own webhook on activation (open n8n issues:
+   URL silently dropped, 403s with a manual secret token). Pick one mechanism.
+
+Gates that prove less than they claim:
+
+5. Phase 3 tests file -> CouchDB only; CouchDB -> file (the phone's direction)
+   is never checked.
+6. `$USER`/`$PASS` are never set; `sample.wav` is never created.
+
+Operational:
+
+7. No CouchDB compaction. LiveSync keeps every chunk revision; databases grow
+   many times the vault size. Needs scheduled `_compact` + chunk GC, or the
+   VM disk fills and takes n8n and the bridge down.
+8. No monitoring; every failure in the pipeline is silent.
+9. No Docker log rotation.
+10. No VM backup and no restore test.
+11. Stale NFS mount after a TrueNAS reboot; `_netdev` only orders boot.
+12. The Tailscale subnet router is a single point of failure for all remote
+    access; non-iOS clients also need `--accept-routes`.
+
+## Status of the deployed bundles
 
 `deploy/syncthing-truenas/` has been corrected: the redundant Traefik service
 is gone, `8384` is published so a remote Traefik can reach it, the Docker
