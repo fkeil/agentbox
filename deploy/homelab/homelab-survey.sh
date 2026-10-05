@@ -36,7 +36,7 @@ have tailscale && tailscale status 2>&1 | head -10 || echo "(not installed)"
 
 h "GPU"
 if have nvidia-smi; then
-  nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv 2>&1
+  nvidia-smi --query-gpu=name,memory.total,memory.used,utilization.gpu,power.draw,driver_version --format=csv 2>&1
 else
   echo "(no nvidia-smi)"
 fi
@@ -45,15 +45,21 @@ have lspci && lspci -nn 2>/dev/null | grep -Ei 'vga|3d|display' || true
 h "STORAGE"
 try zpool list
 echo "--- datasets (depth 2) ---"
-have zfs && zfs list -o name,used,avail,mountpoint -d 2 2>/dev/null | head -40 || echo "(no zfs)"
+have zfs && zfs list -o name,used,usedbysnapshots,avail,mountpoint -d 2 2>/dev/null | head -40 || echo "(no zfs)"
 echo "--- nfs exports ---"
 [ -f /etc/exports ] && grep -vE '^\s*#|^\s*$' /etc/exports | head -20 || echo "(none)"
+
+h "HOST LOAD"
+echo "cores: $(nproc)   $(uptime)"
+have free && free -h
 
 h "CONTAINERS"
 if have docker; then
   docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' 2>&1 | head -40
   echo "--- compose projects ---"
   docker ps --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | sort -u | grep -v '^$'
+  echo "--- live resource use ---"
+  docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>&1 | head -40
 else
   echo "(no docker)"
 fi
@@ -66,6 +72,55 @@ if have qm; then
   echo "--- storage ---"; try pvesm status
   echo "--- bridges ---"
   grep -E 'iface|bridge-ports|address' /etc/network/interfaces 2>/dev/null | head -30
+fi
+
+# ---------- Proxmox resource usage ----------
+if have pvesh; then
+  h "PROXMOX GUEST USAGE (7-day averages)"
+  # Instantaneous CPU is noise for cleanup decisions; a week's average from
+  # Proxmox's own RRD data shows what each guest actually consumes.
+  python3 - << 'PY'
+import json, subprocess
+
+def pvesh(path, *args):
+    out = subprocess.run(["pvesh", "get", path, *args, "--output-format", "json"],
+                         capture_output=True, text=True)
+    return json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else []
+
+def avg(rows, key):
+    vals = [r[key] for r in rows if r.get(key) is not None]
+    return sum(vals) / len(vals) if vals else None
+
+gib = lambda b: f"{(b or 0) / 2**30:.1f}"
+print(f"{'ID':>5} {'KIND':4} {'NAME':24} {'STATUS':8} {'BOOT':4} {'vCPU':>4} "
+      f"{'CPU%':>5} {'MEM used/alloc GiB':>18} {'DISK alloc':>10} {'NET kB/s':>8}")
+for g in sorted(pvesh("/cluster/resources", "--type", "vm"), key=lambda r: r["vmid"]):
+    kind = "qemu" if g["type"] == "qemu" else "lxc"
+    rrd = pvesh(f"/nodes/{g['node']}/{kind}/{g['vmid']}/rrddata",
+                "--timeframe", "week", "--cf", "AVERAGE")
+    cpu, mem = avg(rrd, "cpu"), avg(rrd, "mem")
+    net = (avg(rrd, "netin") or 0) + (avg(rrd, "netout") or 0)
+    cfg = subprocess.run(["qm" if kind == "qemu" else "pct", "config", str(g["vmid"])],
+                         capture_output=True, text=True).stdout
+    boot = "yes" if "onboot: 1" in cfg else "no"
+    status = "template" if g.get("template") else g.get("status", "?")
+    print(f"{g['vmid']:>5} {'vm' if kind == 'qemu' else 'ct':4} {g.get('name', '')[:24]:24} "
+          f"{status:8} {boot:4} {g.get('maxcpu', 0):>4} "
+          f"{(f'{cpu * 100:.1f}' if cpu is not None else '-'):>5} "
+          f"{(gib(mem) if mem is not None else '-'):>8} / {gib(g.get('maxmem')):>7} "
+          f"{gib(g.get('maxdisk')):>10} {net / 1024:>8.1f}")
+PY
+  echo "(CPU% is of the guest's own vCPUs. Stopped guests show '-'.)"
+
+  echo "--- orphaned 'unused' disks still holding space ---"
+  grep -H '^unused' /etc/pve/qemu-server/*.conf /etc/pve/lxc/*.conf 2>/dev/null || echo "(none)"
+  echo "--- snapshots per guest ---"
+  for id in $(qm list 2>/dev/null | awk 'NR>1 {print $1}'); do
+    n=$(qm listsnapshot "$id" 2>/dev/null | grep -vc current); [ "${n:-0}" -gt 0 ] && echo "vm $id: $n"
+  done
+  for id in $(pct list 2>/dev/null | awk 'NR>1 {print $1}'); do
+    n=$(pct listsnapshot "$id" 2>/dev/null | grep -vc current); [ "${n:-0}" -gt 0 ] && echo "ct $id: $n"
+  done
 fi
 
 # ---------- Proxmox backups ----------
