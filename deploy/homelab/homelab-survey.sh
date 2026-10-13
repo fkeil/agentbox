@@ -25,6 +25,7 @@ echo "os:       $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
 [ -f /etc/version ] && echo "truenas:  $(cat /etc/version)"
 have pveversion && echo "proxmox:  $(pveversion)"
 echo "kernel:   $(uname -rm)"
+[ -r /proc/device-tree/model ] && echo "model:    $(tr -d '\0' < /proc/device-tree/model)"
 
 h "NETWORK"
 try ip -br -4 addr

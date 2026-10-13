@@ -16,6 +16,12 @@ Three physical machines, all on `192.168.1.0/24`.
 | **Proxmox** | Separate host. Already runs Traefik. Hosts the app-stack VM. |
 | **Dell Pro Max / NVIDIA GB10** | ARM64, DGX OS. ComfyUI only. May be powered off; nothing depends on it. |
 
+Also on the LAN: **syncboy** `192.168.1.236` — a Raspberry Pi (reported as a
+"Pi 6", which does not exist yet; almost certainly a Pi 5) with a 2 TB SSD.
+Single disk, low power. Proposed role: off-box backup target for small,
+critical data, second Tailscale subnet router, secondary DNS. Not suited to
+primary storage (no redundancy) or to large Whisper models (CPU only).
+
 Phone is **iPhone/iPad** — this drives the vault sync decision below.
 
 ## Service placement
