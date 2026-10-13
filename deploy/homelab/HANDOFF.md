@@ -78,6 +78,10 @@ are not E2EE, so voice notes transit Telegram's servers.
   (ZFS + Samba/NFS LXC) or onto a Raspberry Pi 5 with 2x4TB NVMe. A Pi cannot
   host a GPU (single PCIe lane, no slot). Recommended: Proxmox absorbs
   storage, Pi 5 becomes the off-box ZFS replication target.
+- **syncboy -> DNS + PBS copy** (decided 2026-10-13): clean in place, take
+  over `192.168.1.7` from the dead Pi-hole, run Pi-hole v6 there, and become
+  a second PBS (community arm64 build) that *pulls* from the existing PBS.
+  Execute `SYNCBOY.md`.
 - **Proxmox cleanup in progress** with `park-guests.sh` (reversible: graceful
   shutdown + onboot off, recorded in `/root/parked-guests.tsv`).
 
